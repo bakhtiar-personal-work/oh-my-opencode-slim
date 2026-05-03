@@ -1,4 +1,7 @@
 import type { Plugin } from '@opencode-ai/plugin';
+import {
+  AGENT_SIDEBAR_DESCRIPTIONS,
+} from './agents/descriptions';
 import { createAgents, getAgentConfigs, getDisabledAgents } from './agents';
 import { buildOrchestratorPrompt } from './agents/orchestrator';
 import {
@@ -43,7 +46,15 @@ import {
   createPresetManager,
   createWebfetchTool,
 } from './tools';
-import { recordTuiAgentModel, recordTuiAgentModels } from './tui-state';
+import {
+  recordAgentDetails,
+  recordAgentVariant,
+  recordOrchestratorActivity,
+  recordSessionEnd,
+  recordSessionStart,
+  recordTuiAgentModel,
+  recordTuiAgentModels,
+} from './tui-state';
 import {
   createDisplayNameMentionRewriter,
   resolveRuntimeAgentName,
@@ -643,6 +654,26 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       }
       recordTuiAgentModels({ agentModels: tuiAgentModels });
 
+      const agentDetails: Record<
+        string,
+        { description: string; variant?: string }
+      > = {};
+      for (const agentDef of agentDefs) {
+        if (agentDef.name === 'councillor') continue;
+        const entry = configAgent[agentDef.name] as
+          | Record<string, unknown>
+          | undefined;
+        agentDetails[agentDef.name] = {
+          description:
+            AGENT_SIDEBAR_DESCRIPTIONS[agentDef.name] ?? agentDef.name,
+          variant:
+            typeof entry?.variant === 'string'
+              ? (entry.variant as string)
+              : (agentDef.config.variant as string | undefined),
+        };
+      }
+      recordAgentDetails(agentDetails);
+
       // Merge MCP configs
       const configMcp = opencodeConfig.mcp as
         | Record<string, unknown>
@@ -773,6 +804,32 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       // Handle session.status events for pane cleanup
       await multiplexerSessionManager.onSessionStatus(event);
 
+      // Track session.status to update sidebar active counts
+      if (event.type === 'session.status') {
+        const statusType = event.properties?.status?.type;
+        const sessionID =
+          event.properties?.info?.id ?? event.properties?.sessionID;
+        if (sessionID) {
+          if (
+            statusType === 'idle' ||
+            statusType === 'completed' ||
+            statusType === 'error'
+          ) {
+            recordSessionEnd(sessionID);
+          } else if (statusType === 'running' || statusType === 'busy') {
+            const agent = sessionAgentMap.get(sessionID);
+            if (agent === 'orchestrator') {
+              recordOrchestratorActivity();
+            } else if (agent) {
+              recordSessionStart({
+                sessionID,
+                agentName: agent,
+              });
+            }
+          }
+        }
+      }
+
       // Handle session.deleted events for pane cleanup
       await multiplexerSessionManager.onSessionDeleted(event);
 
@@ -802,6 +859,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }
         if (sessionID) {
           sessionAgentMap.delete(sessionID);
+          recordSessionEnd(sessionID);
         }
       }
     },
@@ -865,7 +923,11 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     // Track which agent each session uses (needed for serve-mode prompt
     // injection)
     'chat.message': async (
-      input: { sessionID: string; agent?: string },
+      input: {
+        sessionID: string;
+        agent?: string;
+        variant?: string;
+      },
       output?: { message?: { agent?: string } },
     ) => {
       const rawAgent = input.agent ?? output?.message?.agent;
@@ -883,6 +945,9 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       if (agent) {
         sessionAgentMap.set(input.sessionID, agent);
+        if (typeof input.variant === 'string') {
+          recordAgentVariant({ agentName: agent, variant: input.variant });
+        }
       }
       todoContinuationHook.handleChatMessage({
         sessionID: input.sessionID,

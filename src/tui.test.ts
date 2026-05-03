@@ -7,6 +7,9 @@ function createSnapshot(agentModels: TuiSnapshot['agentModels']): TuiSnapshot {
     version: 1,
     updatedAt: 0,
     agentModels,
+    agentDetails: {},
+    activeSessions: {},
+    orchestratorLastActive: 0,
   };
 }
 

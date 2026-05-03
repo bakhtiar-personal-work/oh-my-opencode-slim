@@ -2,10 +2,18 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+export interface AgentDetail {
+  description: string;
+  variant?: string;
+}
+
 export interface TuiSnapshot {
   version: 1;
   updatedAt: number;
   agentModels: Record<string, string>;
+  agentDetails: Record<string, AgentDetail>;
+  activeSessions: Record<string, string>;
+  orchestratorLastActive: number;
 }
 
 const STATE_DIR = 'oh-my-opencode-slim';
@@ -26,6 +34,9 @@ function emptySnapshot(): TuiSnapshot {
     version: 1,
     updatedAt: Date.now(),
     agentModels: {},
+    agentDetails: {},
+    activeSessions: {},
+    orchestratorLastActive: 0,
   };
 }
 
@@ -38,6 +49,12 @@ function parseSnapshot(value: string): TuiSnapshot {
     updatedAt:
       typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
     agentModels: parsed.agentModels ?? {},
+    agentDetails: parsed.agentDetails ?? {},
+    activeSessions: parsed.activeSessions ?? {},
+    orchestratorLastActive:
+      typeof parsed.orchestratorLastActive === 'number'
+        ? parsed.orchestratorLastActive
+        : 0,
   };
 }
 
@@ -88,5 +105,47 @@ export function recordTuiAgentModel(input: {
 }): void {
   updateSnapshot((snapshot) => {
     snapshot.agentModels[input.agentName] = input.model;
+  });
+}
+
+export function recordAgentDetails(
+  details: Record<string, AgentDetail>,
+): void {
+  updateSnapshot((snapshot) => {
+    snapshot.agentDetails = { ...details };
+  });
+}
+
+export function recordAgentVariant(input: {
+  agentName: string;
+  variant: string;
+}): void {
+  updateSnapshot((snapshot) => {
+    const existing = snapshot.agentDetails[input.agentName];
+    snapshot.agentDetails[input.agentName] = {
+      description: existing?.description ?? '',
+      variant: input.variant,
+    };
+  });
+}
+
+export function recordSessionStart(input: {
+  sessionID: string;
+  agentName: string;
+}): void {
+  updateSnapshot((snapshot) => {
+    snapshot.activeSessions[input.sessionID] = input.agentName;
+  });
+}
+
+export function recordSessionEnd(sessionID: string): void {
+  updateSnapshot((snapshot) => {
+    delete snapshot.activeSessions[sessionID];
+  });
+}
+
+export function recordOrchestratorActivity(): void {
+  updateSnapshot((snapshot) => {
+    snapshot.orchestratorLastActive = Date.now();
   });
 }
