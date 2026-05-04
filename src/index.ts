@@ -48,11 +48,11 @@ import {
 } from './tools';
 import {
   recordAgentDetails,
-  recordAgentVariant,
   recordOrchestratorActivity,
   recordSessionEnd,
+  recordSessionModel,
   recordSessionStart,
-  recordTuiAgentModel,
+  recordSessionVariant,
   recordTuiAgentModels,
 } from './tui-state';
 import {
@@ -769,15 +769,24 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       if (event.type === 'message.updated') {
         const info = event.properties?.info;
-        if (
-          typeof info?.agent === 'string' &&
-          typeof info.providerID === 'string' &&
-          typeof info.modelID === 'string'
-        ) {
-          recordTuiAgentModel({
-            agentName: resolveRuntimeAgentName(config, info.agent),
-            model: `${info.providerID}/${info.modelID}`,
-          });
+        if (typeof info?.agent === 'string') {
+          const resolvedAgent = resolveRuntimeAgentName(config, info.agent);
+          if (resolvedAgent === 'orchestrator') {
+            recordOrchestratorActivity();
+          }
+          if (
+            typeof info.providerID === 'string' &&
+            typeof info.modelID === 'string'
+          ) {
+            const sessionID =
+              info.sessionID ?? event.properties?.sessionID;
+            if (sessionID) {
+              recordSessionModel({
+                sessionID,
+                model: `${info.providerID}/${info.modelID}`,
+              });
+            }
+          }
         }
       }
 
@@ -926,6 +935,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       input: {
         sessionID: string;
         agent?: string;
+        model?: { providerID: string; modelID: string };
         variant?: string;
       },
       output?: { message?: { agent?: string } },
@@ -945,8 +955,25 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       if (agent) {
         sessionAgentMap.set(input.sessionID, agent);
+        if (agent === 'orchestrator') {
+          recordOrchestratorActivity();
+        } else {
+          recordSessionStart({
+            sessionID: input.sessionID,
+            agentName: agent,
+          });
+        }
+        if (input.model) {
+          recordSessionModel({
+            sessionID: input.sessionID,
+            model: `${input.model.providerID}/${input.model.modelID}`,
+          });
+        }
         if (typeof input.variant === 'string') {
-          recordAgentVariant({ agentName: agent, variant: input.variant });
+          recordSessionVariant({
+            sessionID: input.sessionID,
+            variant: input.variant,
+          });
         }
       }
       todoContinuationHook.handleChatMessage({

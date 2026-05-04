@@ -7,6 +7,11 @@ export interface AgentDetail {
   variant?: string;
 }
 
+export interface SessionFinish {
+  agent: string;
+  time: number;
+}
+
 export interface TuiSnapshot {
   version: 1;
   updatedAt: number;
@@ -14,6 +19,10 @@ export interface TuiSnapshot {
   agentDetails: Record<string, AgentDetail>;
   activeSessions: Record<string, string>;
   orchestratorLastActive: number;
+  agentFinishedAt: Record<string, number>;
+  sessionModels: Record<string, string>;
+  sessionVariants: Record<string, string>;
+  sessionFinished: Record<string, SessionFinish>;
 }
 
 const STATE_DIR = 'oh-my-opencode-slim';
@@ -37,6 +46,10 @@ function emptySnapshot(): TuiSnapshot {
     agentDetails: {},
     activeSessions: {},
     orchestratorLastActive: 0,
+    agentFinishedAt: {},
+    sessionModels: {},
+    sessionVariants: {},
+    sessionFinished: {},
   };
 }
 
@@ -55,6 +68,10 @@ function parseSnapshot(value: string): TuiSnapshot {
       typeof parsed.orchestratorLastActive === 'number'
         ? parsed.orchestratorLastActive
         : 0,
+    agentFinishedAt: parsed.agentFinishedAt ?? {},
+    sessionModels: parsed.sessionModels ?? {},
+    sessionVariants: parsed.sessionVariants ?? {},
+    sessionFinished: parsed.sessionFinished ?? {},
   };
 }
 
@@ -135,12 +152,45 @@ export function recordSessionStart(input: {
 }): void {
   updateSnapshot((snapshot) => {
     snapshot.activeSessions[input.sessionID] = input.agentName;
+    delete snapshot.agentFinishedAt[input.agentName];
+    delete snapshot.sessionFinished[input.sessionID];
   });
 }
 
 export function recordSessionEnd(sessionID: string): void {
   updateSnapshot((snapshot) => {
+    const agentName = snapshot.activeSessions[sessionID];
     delete snapshot.activeSessions[sessionID];
+    if (agentName) {
+      const stillActive = Object.values(snapshot.activeSessions).includes(
+        agentName,
+      );
+      if (!stillActive) {
+        snapshot.agentFinishedAt[agentName] = Date.now();
+      }
+      snapshot.sessionFinished[sessionID] = {
+        agent: agentName,
+        time: Date.now(),
+      };
+    }
+  });
+}
+
+export function recordSessionModel(input: {
+  sessionID: string;
+  model: string;
+}): void {
+  updateSnapshot((snapshot) => {
+    snapshot.sessionModels[input.sessionID] = input.model;
+  });
+}
+
+export function recordSessionVariant(input: {
+  sessionID: string;
+  variant: string;
+}): void {
+  updateSnapshot((snapshot) => {
+    snapshot.sessionVariants[input.sessionID] = input.variant;
   });
 }
 

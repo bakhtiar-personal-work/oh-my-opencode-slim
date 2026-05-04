@@ -30,7 +30,17 @@ const SPINNER_FRAMES = [
   '⠇',
   '⠏',
 ];
-const ORCHESTRATOR_ACTIVITY_MS = 15_000;
+
+const AGENT_SORT_PRIORITY: Record<string, number> = {
+  orchestrator: 0,
+  explorer: 1,
+  librarian: 2,
+  fixer: 3,
+  oracle: 4,
+  designer: 5,
+  observer: 6,
+  council: 99,
+};
 
 type Child = JSX.Element | string | number | null | undefined | false;
 
@@ -81,33 +91,73 @@ export function getSidebarAgentNames(snapshot: TuiSnapshot): string[] {
     : FALLBACK_SIDEBAR_AGENTS;
 }
 
-function computeActiveAgentCounts(
-  snapshot: TuiSnapshot,
-  now: number,
-): Record<string, number> {
-  const counts: Record<string, number> = {};
-
-  for (const agentName of Object.values(snapshot.activeSessions ?? {})) {
-    counts[agentName] = (counts[agentName] ?? 0) + 1;
-  }
-
-  const orchestratorActive =
-    now - (snapshot.orchestratorLastActive ?? 0) < ORCHESTRATOR_ACTIVITY_MS;
-  if (orchestratorActive) {
-    counts.orchestrator = (counts.orchestrator ?? 0) + 1;
-  }
-
-  return counts;
-}
-
-function computeTotalActive(
-  agentCounts: Record<string, number>,
-): number {
-  return Object.values(agentCounts).reduce((sum, n) => sum + n, 0);
-}
+const FLASH_DURATION_MS = 2000;
 
 function getSpinnerChar(now: number): string {
   return SPINNER_FRAMES[Math.floor(now / 80) % SPINNER_FRAMES.length];
+}
+
+interface SessionEntry {
+  sessionID: string;
+  agentName: string;
+  running: boolean;
+  finished: boolean;
+}
+
+function getActiveSessions(
+  snapshot: TuiSnapshot,
+  now: number,
+): SessionEntry[] {
+  const seen = new Set<string>();
+  const entries: SessionEntry[] = [];
+
+  for (const [sessionID, agentName] of Object.entries(
+    snapshot.activeSessions ?? {},
+  )) {
+    if (agentName === 'councillor') continue;
+    seen.add(sessionID);
+    entries.push({ sessionID, agentName, running: true, finished: false });
+  }
+
+  for (const [sessionID, fin] of Object.entries(
+    snapshot.sessionFinished ?? {},
+  )) {
+    if (seen.has(sessionID)) continue;
+    if (fin.agent === 'councillor') continue;
+
+    // Account for polling delay: TUI may not see the finish until 1s later
+    if (now - fin.time >= FLASH_DURATION_MS + 1000) continue;
+
+    entries.push({
+      sessionID,
+      agentName: fin.agent,
+      running: false,
+      finished: true,
+    });
+  }
+
+  const orchestratorAgo = now - (snapshot.orchestratorLastActive ?? 0);
+  const orchestratorActive = orchestratorAgo < 15_000;
+  const orchestratorBlinking =
+    orchestratorAgo >= 15_000 && orchestratorAgo < 15_000 + FLASH_DURATION_MS;
+
+  if (orchestratorActive) {
+    entries.push({
+      sessionID: '__orchestrator__',
+      agentName: 'orchestrator',
+      running: true,
+      finished: false,
+    });
+  } else if (orchestratorBlinking) {
+    entries.push({
+      sessionID: '__orchestrator__',
+      agentName: 'orchestrator',
+      running: false,
+      finished: true,
+    });
+  }
+
+  return entries;
 }
 
 function renderSidebar(
@@ -120,35 +170,52 @@ function renderSidebar(
   },
 ): JSX.Element {
   const now = Date.now();
-  const agentCounts = computeActiveAgentCounts(snapshot, now);
-  const totalActive = computeTotalActive(agentCounts);
+  const sessions = getActiveSessions(snapshot, now);
+  const totalActive = sessions.filter((s) => s.running).length;
   const spinner = getSpinnerChar(now);
 
-  const agentNames = getSidebarAgentNames(snapshot)
-    .filter((n) => n !== 'councillor');
+  const ourSessions = sessions
+    .filter((s) => s.agentName in AGENT_SORT_PRIORITY)
+    .sort((a, b) => {
+      const pa = AGENT_SORT_PRIORITY[a.agentName] ?? 99;
+      const pb = AGENT_SORT_PRIORITY[b.agentName] ?? 99;
+      if (pa !== pb) return pa - pb;
+      return a.agentName.localeCompare(b.agentName);
+    });
 
-  const sortedNames = [
-    'orchestrator',
-    ...agentNames.filter((n) => n !== 'orchestrator').sort(),
-  ];
+  const customSessions = sessions
+    .filter((s) => !(s.agentName in AGENT_SORT_PRIORITY))
+    .sort((a, b) => a.agentName.localeCompare(b.agentName));
 
   const agentRows: Child[] = [];
 
-  for (const name of sortedNames) {
-    const running = (agentCounts[name] ?? 0) > 0;
-    const count = agentCounts[name] ?? 0;
-    const indicator = running ? spinner : '·';
-    const desc =
-      snapshot.agentDetails?.[name]?.description ??
-      AGENT_SIDEBAR_DESCRIPTIONS[name] ??
-      name;
-    const model = snapshot.agentModels[name]
-      ? formatSidebarModelName(snapshot.agentModels[name])
-      : 'pending';
-    const variant = snapshot.agentDetails?.[name]?.variant;
-    const indicatorColor = running ? theme.accent : theme.textMuted;
+  const ourAgentCounts = new Map<string, number>();
+  for (const { agentName } of ourSessions) {
+    ourAgentCounts.set(agentName, (ourAgentCounts.get(agentName) ?? 0) + 1);
+  }
 
-    const nameStr = truncate(name, 12);
+  for (const entry of ourSessions) {
+    const { sessionID, agentName, running, finished } = entry;
+    const elapsed = finished
+      ? now - (snapshot.sessionFinished?.[sessionID]?.time ?? 0)
+      : 0;
+    const flashDot = finished && Math.floor(elapsed / 200) % 2 === 0;
+    const indicator = running ? spinner : flashDot ? '·' : ' ';
+    const desc =
+      snapshot.agentDetails?.[agentName]?.description ??
+      AGENT_SIDEBAR_DESCRIPTIONS[agentName] ??
+      agentName;
+    const rawModel = snapshot.sessionModels?.[sessionID];
+    const model = rawModel
+      ? formatSidebarModelName(rawModel)
+      : snapshot.agentModels[agentName]
+        ? formatSidebarModelName(snapshot.agentModels[agentName])
+        : 'pending';
+    const variant = snapshot.sessionVariants?.[sessionID]
+      ?? snapshot.agentDetails?.[agentName]?.variant;
+    const indicatorColor = theme.accent;
+    const nameStr = truncate(agentName, 16);
+    const agentCount = ourAgentCounts.get(agentName) ?? 1;
     const descStr = truncate(desc, 12);
 
     agentRows.push(
@@ -158,18 +225,16 @@ function renderSidebar(
           box({ flexDirection: 'row' }, [
             text({ fg: indicatorColor }, [`${indicator} `]),
             text({ fg: theme.text }, [nameStr]),
+            text({ fg: theme.accent }, [` x${agentCount}`]),
           ]),
           box({ flexDirection: 'row' }, [
             text({ fg: theme.text }, [descStr]),
-            count > 0
-              ? text({ fg: theme.accent }, [` ×${count}`])
-              : null,
           ]),
         ],
       ),
     );
 
-    const modelStr = truncate(model, 14).padEnd(14);
+    const modelStr = truncate(model, 20).padEnd(8);
 
     agentRows.push(
       box(
@@ -182,6 +247,63 @@ function renderSidebar(
         ],
       ),
     );
+  }
+
+  if (customSessions.length > 0) {
+    agentRows.push(box({ width: '100%' }));
+
+    const customAgentCounts = new Map<string, number>();
+    for (const { agentName } of customSessions) {
+      customAgentCounts.set(
+        agentName,
+        (customAgentCounts.get(agentName) ?? 0) + 1,
+      );
+    }
+
+    for (const entry of customSessions) {
+      const { sessionID, agentName, running, finished } = entry;
+      const elapsed = finished
+        ? now - (snapshot.sessionFinished?.[sessionID]?.time ?? 0)
+        : 0;
+      const flashDot = finished && Math.floor(elapsed / 200) % 2 === 0;
+      const indicator = running ? spinner : flashDot ? '·' : ' ';
+      const rawModel = snapshot.sessionModels?.[sessionID];
+      const model = rawModel
+        ? formatSidebarModelName(rawModel)
+        : snapshot.agentModels[agentName]
+          ? formatSidebarModelName(snapshot.agentModels[agentName])
+          : 'pending';
+      const variant = snapshot.sessionVariants?.[sessionID]
+        ?? snapshot.agentDetails?.[agentName]?.variant;
+      const customCount = customAgentCounts.get(agentName) ?? 1;
+      const nameStr = truncate(agentName, 16);
+      const modelStr = truncate(model, 20).padEnd(8);
+
+      agentRows.push(
+        box(
+          { width: '100%', flexDirection: 'row', justifyContent: 'space-between' },
+          [
+            box({ flexDirection: 'row' }, [
+              text({ fg: theme.accent }, [`${indicator} `]),
+              text({ fg: theme.text }, [nameStr]),
+              text({ fg: theme.accent }, [` x${customCount}`]),
+            ]),
+          ],
+        ),
+      );
+
+      agentRows.push(
+        box(
+          { width: '100%', flexDirection: 'row', justifyContent: 'space-between' },
+          [
+            text({ fg: theme.textMuted }, [`  ${modelStr}`]),
+            variant
+              ? text({ fg: theme.textMuted }, [variant])
+              : null,
+          ],
+        ),
+      );
+    }
   }
 
   return box(
@@ -200,7 +322,7 @@ function renderSidebar(
         { width: '100%', flexDirection: 'row', justifyContent: 'space-between' },
         [
           text({ fg: theme.text }, ['Agents']),
-          text({ fg: theme.textMuted }, [`[${totalActive} total]`]),
+          text({ fg: theme.textMuted }, [`[${totalActive} active]`]),
         ],
       ),
       ...agentRows,

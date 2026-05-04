@@ -10,6 +10,10 @@ function createSnapshot(agentModels: TuiSnapshot['agentModels']): TuiSnapshot {
     agentDetails: {},
     activeSessions: {},
     orchestratorLastActive: 0,
+    agentFinishedAt: {},
+    sessionModels: {},
+    sessionVariants: {},
+    sessionFinished: {},
   };
 }
 
