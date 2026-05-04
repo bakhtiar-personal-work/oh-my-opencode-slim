@@ -46,11 +46,14 @@ import {
 import {
   recordAgentDetails,
   recordOrchestratorActivity,
+  recordSessionDone,
   recordSessionEnd,
   recordSessionModel,
+  recordSessionNode,
   recordSessionStart,
   recordSessionVariant,
   recordTuiAgentModels,
+  updateSnapshot,
 } from './tui-state';
 import {
   createDisplayNameMentionRewriter,
@@ -313,6 +316,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       readContextMaxFiles: config.sessionManager?.readContextMaxFiles ?? 8,
       shouldManageSession: (sessionID) =>
         sessionAgentMap.get(sessionID) === 'orchestrator',
+      onContextUpdated: (fileCountBySession) => {
+        for (const [sessionId, count] of Object.entries(fileCountBySession)) {
+          updateSnapshot((snapshot) => {
+            const node = snapshot.sessionTree[sessionId];
+            if (node) {
+              node.fileCount = count;
+            }
+          });
+        }
+      },
     });
     interviewManager = createInterviewManager(ctx, config);
     presetManager = createPresetManager(ctx, config);
@@ -786,8 +799,27 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       if (event.type === 'session.created') {
         const childSessionId = event.properties?.info?.id;
         const parentSessionId = event.properties?.info?.parentID;
+        const title = event.properties?.info?.title;
+        const agent = event.properties?.info?.agent;
         if (depthTracker && childSessionId && parentSessionId) {
           depthTracker.registerChild(parentSessionId, childSessionId);
+        }
+        if (childSessionId) {
+          recordSessionNode({
+            sessionID: childSessionId,
+            title: title ?? '',
+            agent: agent ?? '',
+            parentId: parentSessionId,
+          });
+        }
+        if (childSessionId && parentSessionId) {
+          // Add child to parent's childIds by rewriting the parent node
+          updateSnapshot((snapshot) => {
+            const parent = snapshot.sessionTree[parentSessionId];
+            if (parent && !parent.childIds.includes(childSessionId)) {
+              parent.childIds.push(childSessionId);
+            }
+          });
         }
       }
 
@@ -806,7 +838,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       // Handle session.status events for pane cleanup
       await multiplexerSessionManager.onSessionStatus(event);
 
-      // Track session.status to update sidebar active counts
+      // Track session.status to update sidebar active counts + session tree
       if (event.type === 'session.status') {
         const statusType = event.properties?.status?.type;
         const sessionID =
@@ -818,6 +850,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             statusType === 'error'
           ) {
             recordSessionEnd(sessionID);
+            recordSessionDone(sessionID);
           } else if (statusType === 'running' || statusType === 'busy') {
             const agent = sessionAgentMap.get(sessionID);
             if (agent === 'orchestrator') {
@@ -862,6 +895,9 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         if (sessionID) {
           sessionAgentMap.delete(sessionID);
           recordSessionEnd(sessionID);
+          // Mark done so flash dot shows before natural expiry in TUI render.
+          // We don't delete — the TUI render handles expiry via elapsed > FLASH_DURATION_MS.
+          recordSessionDone(sessionID);
         }
       }
     },
@@ -949,7 +985,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       if (agent) {
         sessionAgentMap.set(input.sessionID, agent);
         if (agent === 'orchestrator') {
-          recordOrchestratorActivity();
+          // orchestrator handled inline below — no special activity tracking needed
         } else {
           recordSessionStart({
             sessionID: input.sessionID,
@@ -965,6 +1001,17 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         if (typeof input.variant === 'string') {
           recordSessionVariant({
             sessionID: input.sessionID,
+            variant: input.variant,
+          });
+        }
+        if (agent) {
+          recordSessionNode({
+            sessionID: input.sessionID,
+            title: '',
+            agent,
+            model: input.model
+              ? `${input.model.providerID}/${input.model.modelID}`
+              : undefined,
             variant: input.variant,
           });
         }

@@ -4,6 +4,11 @@ import type { PluginConfig } from '../config';
 import { DEFAULT_TIMEOUT_MS, TMUX_SPAWN_DELAY_MS } from '../config/constants';
 import { getAgentOverride } from '../config/utils';
 import {
+  recordSessionDone,
+  recordSessionNode,
+  updateSnapshot,
+} from '../tui-state';
+import {
   extractSessionResult,
   type PromptBody,
   parseModelReference,
@@ -30,6 +35,25 @@ export function createDelegateTools(
   multiplexerEnabled: boolean,
 ): Record<string, ToolDefinition> {
   const directory = ctx.directory;
+
+  function recordSessionTree(
+    sessionId: string,
+    parentSessionId: string,
+    agent: string,
+  ): void {
+    recordSessionNode({
+      sessionID: sessionId,
+      title: '',
+      agent,
+      parentId: parentSessionId,
+    });
+    updateSnapshot((snapshot) => {
+      const parent = snapshot.sessionTree[parentSessionId];
+      if (parent && !parent.childIds.includes(sessionId)) {
+        parent.childIds.push(sessionId);
+      }
+    });
+  }
 
   async function runAgentSession(options: {
     parentSessionId: string;
@@ -61,6 +85,9 @@ export function createDelegateTools(
       }
 
       sessionId = session.data.id;
+
+      // Record in session tree directly (bypasses event reliability)
+      recordSessionTree(sessionId, options.parentSessionId, options.agent);
 
       if (depthTracker) {
         const registered = depthTracker.registerChild(
@@ -100,6 +127,9 @@ export function createDelegateTools(
       const extraction = await extractSessionResult(ctx.client, sessionId, {
         includeReasoning: false,
       });
+
+      // Mark done before cleanup so flash dot shows in TUI
+      recordSessionDone(sessionId);
 
       if (extraction.empty) {
         throw new Error('Empty response from provider');
@@ -184,6 +214,9 @@ export function createDelegateTools(
 
           const sessionId = session.data.id;
 
+          // Record in session tree directly
+          recordSessionTree(sessionId, parentSessionId, agentName);
+
           if (depthTracker) {
             depthTracker.registerChild(parentSessionId, sessionId);
           }
@@ -259,6 +292,8 @@ export function createDelegateTools(
           | undefined;
 
         if (status === 'idle' || status === 'completed' || status === 'error') {
+          recordSessionDone(args.session_id);
+
           const extraction = await extractSessionResult(
             ctx.client,
             args.session_id,

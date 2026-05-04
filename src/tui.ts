@@ -7,6 +7,7 @@ import { SUBAGENT_NAMES } from './config/constants';
 import {
   readTuiSnapshot,
   readTuiSnapshotAsync,
+  type SessionNode,
   type TuiSnapshot,
 } from './tui-state';
 
@@ -87,52 +88,165 @@ interface SessionEntry {
   finished: boolean;
 }
 
+function buildOrchestratingRows(
+  snapshot: TuiSnapshot,
+  now: number,
+  theme: { text: unknown; textMuted: unknown; accent: unknown },
+): [string, ...Child[]] {
+  const tree = snapshot.sessionTree;
+  const spinner = getSpinnerChar(now);
+
+  // Collect visible orchestrator sessions (running + flashing done)
+  const visibleOrchSessions: Array<[string, SessionNode]> = [];
+
+  for (const [id, node] of Object.entries(tree)) {
+    if (node.agent !== 'orchestrator') continue;
+    if (node.status === 'running') {
+      visibleOrchSessions.push([id, node]);
+    } else if (node.status === 'done' && node.finishedAt) {
+      const elapsed = now - node.finishedAt;
+      if (elapsed < FLASH_DURATION_MS) {
+        visibleOrchSessions.push([id, node]);
+      }
+    }
+  }
+
+  const countLabel = `${visibleOrchSessions.length} active`;
+
+  if (visibleOrchSessions.length === 0) {
+    return [
+      countLabel,
+      text({ fg: theme.textMuted }, ['No active orchestrations']),
+    ];
+  }
+
+  const rows: Child[] = [];
+
+  for (const [orchId, orchNode] of visibleOrchSessions) {
+    const modelStr = orchNode.model
+      ? formatSidebarModelName(orchNode.model)
+      : '';
+
+    // Find children by parentId (robust: doesn't depend on childIds array)
+    const visibleChildren: Array<{ childId: string; child: SessionNode }> = [];
+    for (const [childId, child] of Object.entries(tree)) {
+      if (child.parentId !== orchId) continue;
+      if (child.status === 'running') {
+        visibleChildren.push({ childId, child });
+      } else if (child.status === 'done' && child.finishedAt) {
+        const elapsed = now - child.finishedAt;
+        if (elapsed < FLASH_DURATION_MS) {
+          visibleChildren.push({ childId, child });
+        }
+      }
+    }
+
+    // Orchestrator flash dot
+    const orchFlash =
+      orchNode.status === 'done' &&
+      orchNode.finishedAt &&
+      Math.floor((now - orchNode.finishedAt) / 200) % 2 === 0;
+    const orchDot =
+      orchNode.status === 'running' ? spinner : orchFlash ? '·' : ' ';
+
+    rows.push(
+      box({ flexDirection: 'row' }, [
+        text({ fg: theme.text }, [`${orchDot} `]),
+        text({ fg: theme.text }, [truncate(orchNode.title || orchId, 28)]),
+      ]),
+    );
+    rows.push(
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          text({ fg: theme.textMuted }, [`  ${modelStr}`]),
+          orchNode.variant
+            ? text({ fg: theme.textMuted }, [orchNode.variant])
+            : null,
+        ],
+      ),
+    );
+
+    // Children
+    let totalFileCount = 0;
+    for (let i = 0; i < visibleChildren.length; i++) {
+      const { childId: _childId, child } = visibleChildren[i];
+      const isLast = i === visibleChildren.length - 1;
+      const branchChar = isLast ? '└' : '├';
+      const pipeChar = isLast ? ' ' : '│';
+      const childModel = child.model ? formatSidebarModelName(child.model) : '';
+      totalFileCount += child.fileCount;
+
+      // Flash dot for done children
+      const childFlash =
+        child.status === 'done' &&
+        child.finishedAt &&
+        Math.floor((now - child.finishedAt) / 200) % 2 === 0;
+      const indicator =
+        child.status === 'running' ? spinner : childFlash ? '·' : ' ';
+
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.accent }, [`  ${branchChar}─ ${child.agent}`]),
+        ]),
+      );
+      rows.push(
+        box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+          },
+          [
+            text({ fg: theme.textMuted }, [`  ${pipeChar}  ${childModel}`]),
+            text({ fg: theme.textMuted }, [
+              child.variant ? child.variant : '',
+              ` ${indicator}`,
+            ]),
+          ],
+        ),
+      );
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.textMuted }, [
+            `  ${pipeChar}  ${child.fileCount} file${child.fileCount !== 1 ? 's' : ''}`,
+          ]),
+        ]),
+      );
+    }
+
+    // Totals
+    rows.push(text({ fg: theme.textMuted }, [`  ${'─'.repeat(22)}`]));
+    rows.push(
+      text({ fg: theme.textMuted }, [
+        `  Total: ${visibleChildren.length} agent${visibleChildren.length !== 1 ? 's' : ''} · ${totalFileCount} file${totalFileCount !== 1 ? 's' : ''}`,
+      ]),
+    );
+    rows.push(box({ width: '100%', height: 1 }));
+  }
+
+  return [countLabel, ...rows];
+}
+
 function getActiveSessions(snapshot: TuiSnapshot, now: number): SessionEntry[] {
-  const seen = new Set<string>();
   const entries: SessionEntry[] = [];
 
-  for (const [sessionID, agentName] of Object.entries(
-    snapshot.activeSessions ?? {},
-  )) {
-    seen.add(sessionID);
-    entries.push({ sessionID, agentName, running: true, finished: false });
-  }
+  for (const [sessionID, node] of Object.entries(snapshot.sessionTree ?? {})) {
+    const agentName = node.agent;
+    if (!agentName) continue;
 
-  for (const [sessionID, fin] of Object.entries(
-    snapshot.sessionFinished ?? {},
-  )) {
-    if (seen.has(sessionID)) continue;
-
-    // Account for polling delay: TUI may not see the finish until 1s later
-    if (now - fin.time >= FLASH_DURATION_MS + 1000) continue;
-
-    entries.push({
-      sessionID,
-      agentName: fin.agent,
-      running: false,
-      finished: true,
-    });
-  }
-
-  const orchestratorAgo = now - (snapshot.orchestratorLastActive ?? 0);
-  const orchestratorActive = orchestratorAgo < 15_000;
-  const orchestratorBlinking =
-    orchestratorAgo >= 15_000 && orchestratorAgo < 15_000 + FLASH_DURATION_MS;
-
-  if (orchestratorActive) {
-    entries.push({
-      sessionID: '__orchestrator__',
-      agentName: 'orchestrator',
-      running: true,
-      finished: false,
-    });
-  } else if (orchestratorBlinking) {
-    entries.push({
-      sessionID: '__orchestrator__',
-      agentName: 'orchestrator',
-      running: false,
-      finished: true,
-    });
+    if (node.status === 'running') {
+      entries.push({ sessionID, agentName, running: true, finished: false });
+    } else if (node.status === 'done' && node.finishedAt) {
+      // Account for polling delay: TUI may not see the finish until 1s later
+      if (now - node.finishedAt < FLASH_DURATION_MS + 1000) {
+        entries.push({ sessionID, agentName, running: false, finished: true });
+      }
+    }
   }
 
   return entries;
@@ -180,14 +294,14 @@ function renderSidebar(
   const ourGroups = new Map<string, SessionGroup>();
   for (const entry of ourSessions) {
     const { sessionID, agentName, running, finished } = entry;
-    const rawModel = snapshot.sessionModels?.[sessionID];
+    const rawModel = snapshot.sessionTree?.[sessionID]?.model;
     const model = rawModel
       ? formatSidebarModelName(rawModel)
       : snapshot.agentModels[agentName]
         ? formatSidebarModelName(snapshot.agentModels[agentName])
         : 'pending';
     const variant =
-      snapshot.sessionVariants?.[sessionID] ??
+      snapshot.sessionTree?.[sessionID]?.variant ??
       snapshot.agentDetails?.[agentName]?.variant;
     const key = `${agentName}\x00${model}\x00${variant ?? ''}`;
 
@@ -213,7 +327,7 @@ function renderSidebar(
     const { sessionID, agentName, running, finished, count, model, variant } =
       entry;
     const elapsed = finished
-      ? now - (snapshot.sessionFinished?.[sessionID]?.time ?? 0)
+      ? now - (snapshot.sessionTree?.[sessionID]?.finishedAt ?? 0)
       : 0;
     const flashDot = finished && Math.floor(elapsed / 200) % 2 === 0;
     const indicator = running ? spinner : flashDot ? '·' : ' ';
@@ -266,14 +380,14 @@ function renderSidebar(
     const customGroups = new Map<string, SessionGroup>();
     for (const entry of customSessions) {
       const { sessionID, agentName, running, finished } = entry;
-      const rawModel = snapshot.sessionModels?.[sessionID];
+      const rawModel = snapshot.sessionTree?.[sessionID]?.model;
       const model = rawModel
         ? formatSidebarModelName(rawModel)
         : snapshot.agentModels[agentName]
           ? formatSidebarModelName(snapshot.agentModels[agentName])
           : 'pending';
       const variant =
-        snapshot.sessionVariants?.[sessionID] ??
+        snapshot.sessionTree?.[sessionID]?.variant ??
         snapshot.agentDetails?.[agentName]?.variant;
       const key = `${agentName}\x00${model}\x00${variant ?? ''}`;
 
@@ -299,7 +413,7 @@ function renderSidebar(
       const { sessionID, agentName, running, finished, count, model, variant } =
         entry;
       const elapsed = finished
-        ? now - (snapshot.sessionFinished?.[sessionID]?.time ?? 0)
+        ? now - (snapshot.sessionTree?.[sessionID]?.finishedAt ?? 0)
         : 0;
       const flashDot = finished && Math.floor(elapsed / 200) % 2 === 0;
       const indicator = running ? spinner : flashDot ? '·' : ' ';
@@ -339,6 +453,12 @@ function renderSidebar(
     }
   }
 
+  if (agentRows.length === 0) {
+    agentRows.push(text({ fg: theme.textMuted }, ['No active agents']));
+  }
+
+  const orchestratingRows = buildOrchestratingRows(snapshot, now, theme);
+
   return box(
     {
       width: '100%',
@@ -363,6 +483,39 @@ function renderSidebar(
         ],
       ),
       ...agentRows,
+      ...(orchestratingRows.length > 0
+        ? [
+            box({ width: '100%', height: 1 }),
+            box(
+              {
+                width: '100%',
+                flexDirection: 'column',
+                border: BORDER,
+                borderColor: theme.borderActive,
+                paddingTop: 0,
+                paddingBottom: 0,
+                paddingLeft: 0,
+                paddingRight: 0,
+              },
+              [
+                box(
+                  {
+                    width: '100%',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                  },
+                  [
+                    text({ fg: theme.text }, ['Orchestrating']),
+                    text({ fg: theme.textMuted }, [
+                      `[${orchestratingRows[0] as string}]`,
+                    ]),
+                  ],
+                ),
+                ...(orchestratingRows.slice(1) as Child[]),
+              ],
+            ),
+          ]
+        : []),
     ],
   );
 }

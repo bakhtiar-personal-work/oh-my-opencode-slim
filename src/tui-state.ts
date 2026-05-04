@@ -12,6 +12,19 @@ export interface SessionFinish {
   time: number;
 }
 
+export interface SessionNode {
+  title: string;
+  agent: string;
+  model: string;
+  variant?: string;
+  fileCount: number;
+  parentId?: string;
+  childIds: string[];
+  status: 'running' | 'done';
+  createdAt: number;
+  finishedAt?: number;
+}
+
 export interface TuiSnapshot {
   version: 1;
   updatedAt: number;
@@ -23,7 +36,14 @@ export interface TuiSnapshot {
   sessionModels: Record<string, string>;
   sessionVariants: Record<string, string>;
   sessionFinished: Record<string, SessionFinish>;
+  sessionTree: Record<string, SessionNode>;
 }
+
+/** In-memory session tree store — shared between main plugin and TUI.
+ *  Both run in the same process; this avoids file I/O latency and polling
+ *  issues. File persistence still happens for agent data but the tree
+ *  is read from memory for instant sidebar updates. */
+export const sessionTreeStore: Record<string, SessionNode> = {};
 
 const STATE_DIR = 'oh-my-opencode-slim';
 const STATE_FILE = 'tui-state.json';
@@ -50,6 +70,7 @@ function emptySnapshot(): TuiSnapshot {
     sessionModels: {},
     sessionVariants: {},
     sessionFinished: {},
+    sessionTree: {},
   };
 }
 
@@ -72,6 +93,7 @@ function parseSnapshot(value: string): TuiSnapshot {
     sessionModels: parsed.sessionModels ?? {},
     sessionVariants: parsed.sessionVariants ?? {},
     sessionFinished: parsed.sessionFinished ?? {},
+    sessionTree: parsed.sessionTree ?? {},
   };
 }
 
@@ -101,7 +123,7 @@ function writeTuiSnapshot(snapshot: TuiSnapshot): void {
   }
 }
 
-function updateSnapshot(mutator: (snapshot: TuiSnapshot) => void): void {
+export function updateSnapshot(mutator: (snapshot: TuiSnapshot) => void): void {
   const snapshot = readTuiSnapshot();
   mutator(snapshot);
   snapshot.updatedAt = Date.now();
@@ -195,5 +217,59 @@ export function recordSessionVariant(input: {
 export function recordOrchestratorActivity(): void {
   updateSnapshot((snapshot) => {
     snapshot.orchestratorLastActive = Date.now();
+  });
+}
+
+export function recordSessionNode(input: {
+  sessionID: string;
+  title: string;
+  agent: string;
+  model?: string;
+  variant?: string;
+  parentId?: string;
+  fileCount?: number;
+  status?: 'running' | 'done';
+}): void {
+  updateSnapshot((snapshot) => {
+    const existing = sessionTreeStore[input.sessionID] ??
+      snapshot.sessionTree[input.sessionID] ?? {
+        title: '',
+        agent: '',
+        model: '',
+        fileCount: 0,
+        childIds: [],
+        status: 'running' as const,
+        createdAt: Date.now(),
+      };
+    const node = {
+      ...existing,
+      title: input.title ?? existing.title,
+      agent: input.agent || existing.agent,
+      model: input.model ?? existing.model,
+      variant: input.variant !== undefined ? input.variant : existing.variant,
+      parentId:
+        input.parentId !== undefined ? input.parentId : existing.parentId,
+      fileCount: input.fileCount ?? existing.fileCount,
+      status: input.status ?? existing.status,
+      createdAt: existing.createdAt,
+    };
+    snapshot.sessionTree[input.sessionID] = node;
+    sessionTreeStore[input.sessionID] = node;
+  });
+}
+
+export function recordSessionDone(sessionID: string): void {
+  updateSnapshot((snapshot) => {
+    const node = snapshot.sessionTree[sessionID];
+    if (node) {
+      node.status = 'done';
+      node.finishedAt = Date.now();
+    }
+    // Also sync to in-memory store (file-read is a different object ref)
+    const storeNode = sessionTreeStore[sessionID];
+    if (storeNode) {
+      storeNode.status = 'done';
+      storeNode.finishedAt = Date.now();
+    }
   });
 }
