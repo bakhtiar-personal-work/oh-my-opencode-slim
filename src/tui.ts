@@ -105,7 +105,7 @@ function buildOrchestratingRows(
       visibleOrchSessions.push([id, node]);
     } else if (node.status === 'done' && node.finishedAt) {
       const elapsed = now - node.finishedAt;
-      if (elapsed < FLASH_DURATION_MS) {
+      if (elapsed < FLASH_DURATION_MS + 1000) {
         visibleOrchSessions.push([id, node]);
       }
     }
@@ -135,7 +135,7 @@ function buildOrchestratingRows(
         visibleChildren.push({ childId, child });
       } else if (child.status === 'done' && child.finishedAt) {
         const elapsed = now - child.finishedAt;
-        if (elapsed < FLASH_DURATION_MS) {
+        if (elapsed < FLASH_DURATION_MS + 1000) {
           visibleChildren.push({ childId, child });
         }
       }

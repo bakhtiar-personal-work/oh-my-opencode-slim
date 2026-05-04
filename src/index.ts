@@ -1013,6 +1013,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
               ? `${input.model.providerID}/${input.model.modelID}`
               : undefined,
             variant: input.variant,
+            status: 'running',
           });
         }
       }
