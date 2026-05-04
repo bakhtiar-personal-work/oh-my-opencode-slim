@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { AGENT_ALIASES, ALL_AGENT_NAMES } from './constants';
-import { CouncilConfigSchema } from './council-schema';
 
 const FALLBACK_AGENT_NAMES = [
   'orchestrator',
@@ -297,8 +296,7 @@ export const PluginConfigSchema = z
       .describe(
         'Agent names to disable completely. ' +
           'Disabled agents are not instantiated and cannot be delegated to. ' +
-          'Orchestrator and council internal agents (councillor) cannot be disabled. ' +
-          "By default, 'observer' is disabled. Remove it from this list and configure a vision-capable model to enable.",
+          'Orchestrator cannot be disabled.',
       ),
     disabled_mcps: z.array(z.string()).optional(),
     // Multiplexer config (new unified config - preferred)
@@ -311,7 +309,6 @@ export const PluginConfigSchema = z
     sessionManager: SessionManagerConfigSchema.optional(),
     todoContinuation: TodoContinuationConfigSchema.optional(),
     fallback: FailoverConfigSchema.optional(),
-    council: CouncilConfigSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (value.agents) {

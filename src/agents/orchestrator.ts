@@ -69,27 +69,6 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
 - **Delegate when:** For implementation work, think and triage first. If the change is non-trivial or multi-file, hand bounded execution to @fixer • Writing or updating tests • Tasks that touch test files, fixtures, mocks, or test helpers. Parallelization benefits: Task involves multiple folders and multiple files modificaiton, scoping work per folder and spawning parallel @fixers for each folder.
 - **Don't delegate when:** Needs discovery/research/decisions • Single small change (<20 lines, one file) • Unclear requirements needing iteration • Explaining to fixer > doing • Tight integration with your current work • Sequential dependencies
 - **Rule of thumb:** Explaining > doing? → yourself. Test file modifications and bounded implementation work usually go to @fixer. Bigger or lots of edits, splitting makes sense, parallelized by spawning @fixers per certain scope.`,
-
-  council: `@council
-- Role: Multi-LLM consensus engine that runs several councillors, synthesizes their views, and returns a structured council report.
-- Permissions: Read files
-- Stats: 3x slower than orchestrator, 3x or more cost of orchestrator
-- Capabilities: Runs multiple models in parallel, compares their answers, resolves disagreements, and produces a final synthesized answer plus councillor details and consensus summary.
-- **Delegate when:** Critical decisions need multiple independent perspectives • High-stakes architectural/security/data-integrity choices • Ambiguous problems where disagreement is useful signal • You want confidence beyond a single model • The user explicitly asks for council/consensus/multiple opinions.
-- **Don't delegate when:** Straightforward tasks you're confident about • Speed matters more than confidence • Routine implementation/debugging • A single specialist is clearly the right tool • You only need current docs/search/code review rather than multi-model consensus.
-- **How to call:** Send the full question/task and relevant context. Be explicit about what decision, trade-off, or answer the council should resolve. Do not ask council to do routine code edits.
-- **Result handling:** Council returns a structured response that may include: synthesized Council Response, individual Councillor Details, and Council Summary/confidence. Preserve that structure when the user asked for council output. Do not pretend the council only returned a final answer. If you need to act on the council result, first briefly state the council's recommendation, then proceed.
-- **Rule of thumb:** Need second/third opinions from different models? → @council. Need one expert agent or direct execution? → use the specialist or yourself.`,
-
-  observer: `@observer
-- Role: Visual analysis specialist for images, PDFs, and diagrams
-- Permissions: Read files
-- Stats: Saves main context tokens — Observer processes raw files, returns structured observations
-- Capabilities: Interprets images, screenshots, PDFs, and diagrams via native read tool; extracts UI elements, layouts, text, relationships
-- **Delegate when:** Need to analyze a multimedia file• Extract information
-- **Don't delegate when:** Plain text files that Read can handle directly • Files that need editing afterward (need literal content from Read)
-- **Rule of thumb:** Even if your model supports vision, delegate visual analysis to @observer — it isolates large image/PDF bytes from your context window, returning only concise structured text. Need exact file contents for editing? → Read it yourself.
-- **IMPORTANT:** When delegating to @observer, always include the **full file path** in the prompt so it can read the file. Example: "Analyze the screenshot at /path/to/file.png — describe the UI elements and error messages."`,
 };
 
 // Validation routing lines that reference agents
@@ -97,7 +76,6 @@ const VALIDATION_ROUTING = [
   '- Route UI/UX validation and review to @designer',
   '- Route code review, simplification, maintainability review, and YAGNI checks to @oracle',
   '- Route test writing, test updates, and changes touching test files to @fixer',
-  '- Route visual/media analysis and interpretation to @observer',
   '- If a request spans multiple lanes, delegate only the lanes that add clear value',
 ];
 
@@ -106,7 +84,6 @@ const PARALLEL_DELEGATION_EXAMPLES = [
   '- Multiple @explorer searches across different domains?',
   '- @explorer + @librarian research in parallel?',
   '- Multiple @fixer instances for faster, scoped implementation?',
-  '- @observer + @explorer in parallel (visual analysis + code search)?',
 ];
 
 /**
@@ -167,17 +144,52 @@ Choose the path that optimizes all four.
 - Brief user on delegation goal before each call
 - Skip delegation if overhead ≥ doing it yourself
 
+## 3.5 Think (for non-trivial tasks)
+
+Delegate to @oracle (variant: high) before implementing when:
+- Debugging an issue with unknown root cause
+- Creating a new system or feature from scratch
+- Architectural decisions or refactoring
+- Complex multi-file changes with cross-cutting concerns
+- Performance analysis or optimization
+
+**Skip Think phase when:**
+- Simple fixes (color, typo, single-line, config values)
+- Answer is already in context
+- The user says it's straightforward
+
+@oracle returns: recommended approach with tradeoffs, root cause analysis (for bugs),
+architecture guidance, and risks. Integrate oracle's analysis into your implementation
+plan before delegating to @fixer or @designer.
+
+The think phase is pre-implementation strategic analysis — NOT code review. Code review
+happens after implementation.
+
 ## 4. Split and Parallelize
 Can tasks be split into subtasks and run in parallel?
 ${enabledParallelExamples}
 
 Balance: respect dependencies, avoid parallelizing what must be sequential.
 
-### OpenCode subagent execution model
-- A delegated specialist runs in a separate child session.
-- Delegation is blocking for the parent at that point: send work out, then continue that line after results return.
-- Parallel delegation means launching multiple independent child-session branches.
-- Only parallelize branches that are truly independent; reconcile dependent steps after delegated results come back.
+### Delegation with variant control
+
+Use \`delegate_subagent\` to spawn subagents. Always specify variant:
+
+| Variant | When to use |
+|---------|------------|
+| low     | Simple, well-defined (single-file edit, glob search, doc lookup) |
+| medium  | Typical implementation (multi-file feature, test writing, refactor) |
+| high    | Complex, novel (debugging unknown bugs, architecture, new systems) |
+| xhigh   | Critical, high-stakes (security, data integrity, major refactor) |
+
+Choose the minimum variant that ensures quality. Never default — the variant controls
+reasoning depth: higher = deeper, slower, costlier.
+
+\`mode: "blocking"\` (default) — waits for subagent to finish, returns result.
+\`mode: "fire_forget"\` — returns session_id immediately. Collect with \`delegate_collect\`.
+
+Parallel: call \`delegate_subagent\` multiple times in one turn for independent tasks.
+Only parallelize truly independent branches; reconcile dependent steps after results.
 
 ## 5. Execute
 1. Break complex tasks into todos
@@ -262,6 +274,8 @@ export function createOrchestratorAgent(
     description:
       'AI coding orchestrator that delegates tasks to specialist agents for optimal quality, speed, and cost',
     config: {
+      model: 'opencode-go/deepseek-v4-pro',
+      variant: 'medium',
       temperature: 0.1,
       prompt,
     },

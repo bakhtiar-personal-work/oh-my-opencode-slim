@@ -5,7 +5,4 @@ export const AGENT_SIDEBAR_DESCRIPTIONS: Record<string, string> = {
   oracle: 'Architecture',
   designer: 'Design',
   fixer: 'Implement',
-  observer: 'Vision',
-  council: 'Multi-LLM',
-  councillor: 'Advisor',
 };

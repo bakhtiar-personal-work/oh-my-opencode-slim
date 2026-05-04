@@ -1,8 +1,6 @@
 import type { Plugin } from '@opencode-ai/plugin';
-import {
-  AGENT_SIDEBAR_DESCRIPTIONS,
-} from './agents/descriptions';
 import { createAgents, getAgentConfigs, getDisabledAgents } from './agents';
+import { AGENT_SIDEBAR_DESCRIPTIONS } from './agents/descriptions';
 import { buildOrchestratorPrompt } from './agents/orchestrator';
 import {
   type AgentOverrideConfig,
@@ -17,7 +15,6 @@ import {
   getPreviousRuntimePreset,
   setActiveRuntimePreset,
 } from './config/runtime-preset';
-import { CouncilManager } from './council';
 import {
   createApplyPatchHook,
   createAutoUpdateCheckerHook,
@@ -42,7 +39,7 @@ import {
 import {
   ast_grep_replace,
   ast_grep_search,
-  createCouncilTool,
+  createDelegateTools,
   createPresetManager,
   createWebfetchTool,
 } from './tools';
@@ -146,8 +143,8 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let taskSessionManagerHook: ReturnType<typeof createTaskSessionManagerHook>;
   let interviewManager: ReturnType<typeof createInterviewManager>;
   let presetManager: ReturnType<typeof createPresetManager>;
-  let councilTools: Record<string, unknown>;
   let webfetch: ReturnType<typeof createWebfetchTool>;
+  let delegateTools: Record<string, unknown>;
   let rewriteDisplayNameMentions: ReturnType<
     typeof createDisplayNameMentionRewriter
   >;
@@ -247,13 +244,13 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
     depthTracker = new SubagentDepthTracker();
 
-    // Initialize council tools (only when council is configured)
-    councilTools = config.council
-      ? createCouncilTool(
-          ctx,
-          new CouncilManager(ctx, config, depthTracker, multiplexerEnabled),
-        )
-      : {};
+    // Initialize delegate tools for orchestrator variant-based subagent spawning
+    delegateTools = createDelegateTools(
+      ctx,
+      config,
+      depthTracker,
+      multiplexerEnabled,
+    );
 
     mcps = createBuiltinMcps(config.disabled_mcps, config.websearch);
     webfetch = createWebfetchTool(ctx);
@@ -321,7 +318,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     presetManager = createPresetManager(ctx, config);
 
     toolCount =
-      Object.keys(councilTools).length +
+      Object.keys(delegateTools).length +
       Object.keys(todoContinuationHook.tool).length +
       1 + // webfetch
       2; // ast_grep_search, ast_grep_replace
@@ -387,7 +384,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     agent: agents,
 
     tool: {
-      ...councilTools,
+      ...delegateTools,
       webfetch,
       ...todoContinuationHook.tool,
       ast_grep_search,
@@ -636,8 +633,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       const tuiAgentModels: Record<string, string> = {};
       for (const agentDef of agentDefs) {
-        if (agentDef.name === 'councillor') continue;
-
         const entry = configAgent[agentDef.name] as
           | Record<string, unknown>
           | undefined;
@@ -659,7 +654,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         { description: string; variant?: string }
       > = {};
       for (const agentDef of agentDefs) {
-        if (agentDef.name === 'councillor') continue;
         const entry = configAgent[agentDef.name] as
           | Record<string, unknown>
           | undefined;
@@ -778,8 +772,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             typeof info.providerID === 'string' &&
             typeof info.modelID === 'string'
           ) {
-            const sessionID =
-              info.sessionID ?? event.properties?.sessionID;
+            const sessionID = info.sessionID ?? event.properties?.sessionID;
             if (sessionID) {
               recordSessionModel({
                 sessionID,
@@ -1061,17 +1054,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }
       }
 
-      // Strip image parts from orchestrator messages when @observer is
-      // available. When the orchestrator's model doesn't support image
-      // input, the API call fails before the LLM can respond. We replace
-      // image bytes with a text nudge so the orchestrator delegates to
-      // @observer instead.
-      processImageAttachments({
-        messages: typedOutput.messages,
-        workDir: ctx.directory,
-        disabledAgents,
-        log,
-      });
+      processImageAttachments();
 
       await todoContinuationHook.handleMessagesTransform({
         messages: typedOutput.messages,

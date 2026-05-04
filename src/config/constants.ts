@@ -1,21 +1,18 @@
 // Agent names
 export const AGENT_ALIASES: Record<string, string> = {
-  explore: "explorer",
-  "frontend-ui-ux-engineer": "designer",
+  explore: 'explorer',
+  'frontend-ui-ux-engineer': 'designer',
 };
 
 export const SUBAGENT_NAMES = [
-  "explorer",
-  "librarian",
-  "oracle",
-  "designer",
-  "fixer",
-  "observer",
-  "council",
-  "councillor",
+  'explorer',
+  'librarian',
+  'oracle',
+  'designer',
+  'fixer',
 ] as const;
 
-export const ORCHESTRATOR_NAME = "orchestrator" as const;
+export const ORCHESTRATOR_NAME = 'orchestrator' as const;
 
 export const ALL_AGENT_NAMES = [ORCHESTRATOR_NAME, ...SUBAGENT_NAMES] as const;
 
@@ -24,31 +21,24 @@ export type AgentName = (typeof ALL_AGENT_NAMES)[number];
 
 // Subagent delegation rules: which agents can spawn which subagents
 // orchestrator: can spawn all subagents (full delegation)
-// fixer: leaf node — prompt forbids delegation; use grep/glob for lookups
-// designer: can spawn explorer (for research during design)
-// explorer/librarian/oracle: cannot spawn any subagents (leaf nodes)
-// Unknown agent types not listed here default to explorer-only access
-// Which agents each agent type can spawn via delegation.
-// councillor is internal — only CouncilManager spawns it.
+// All others: leaf nodes — cannot spawn subagents
 export const ORCHESTRATABLE_AGENTS = [
-  "explorer",
-  "librarian",
-  "oracle",
-  "designer",
-  "fixer",
-  "observer",
-  "council",
+  'explorer',
+  'librarian',
+  'oracle',
+  'designer',
+  'fixer',
 ] as const;
 
 /** Agents that cannot be disabled even if listed in disabled_agents config. */
-export const PROTECTED_AGENTS = new Set(["orchestrator", "councillor"]);
+export const PROTECTED_AGENTS = new Set(['orchestrator']);
 
 /**
  * Get the list of orchestratable agents, excluding any disabled agents.
  * This is used for delegation validation at runtime.
  */
 export function getOrchestratableAgents(
-  disabledAgents?: Set<string>
+  disabledAgents?: Set<string>,
 ): string[] {
   return ORCHESTRATABLE_AGENTS.filter((name) => !disabledAgents?.has(name));
 }
@@ -60,23 +50,17 @@ export const SUBAGENT_DELEGATION_RULES: Record<AgentName, readonly string[]> = {
   explorer: [],
   librarian: [],
   oracle: [],
-  observer: [],
-  council: [],
-  councillor: [],
 };
 
 // Default models for each agent
 // orchestrator is undefined so its model is fully resolved at runtime via priority fallback
 export const DEFAULT_MODELS: Record<AgentName, string | undefined> = {
-  orchestrator: undefined,
-  oracle: "openai/gpt-5.5",
-  librarian: "openai/gpt-5.4-mini",
-  explorer: "openai/gpt-5.4-mini",
-  designer: "openai/gpt-5.4-mini",
-  fixer: "openai/gpt-5.4-mini",
-  observer: "openai/gpt-5.4-mini",
-  council: "openai/gpt-5.4-mini",
-  councillor: "openai/gpt-5.4-mini",
+  orchestrator: 'opencode-go/deepseek-v4-pro',
+  oracle: 'opencode-go/deepseek-v4-pro',
+  librarian: 'opencode-go/kimi-k2.6',
+  explorer: 'opencode-go/minimax-m2.7',
+  designer: 'opencode-go/mimo-v2-pro',
+  fixer: 'opencode-go/deepseek-v4-flash',
 };
 
 // Polling configuration
@@ -100,12 +84,11 @@ If delegating, launch the specialist in the same turn you mention it !END!`;
 // Tmux pane spawn delay (ms) — gives TmuxSessionManager time to create pane
 export const TMUX_SPAWN_DELAY_MS = 500;
 
-// Stagger delay (ms) between parallel councillor launches to avoid tmux collisions
-export const COUNCILLOR_STAGGER_MS = 250;
+// Stagger delay (ms) between parallel session launches to avoid tmux collisions
+export const STAGGER_MS = 250;
 
 // Polling stability
 export const STABLE_POLLS_THRESHOLD = 3;
 
-/** Agents that are disabled by default. Users must explicitly enable them
- *  by removing from disabled_agents and configuring an appropriate model. */
-export const DEFAULT_DISABLED_AGENTS: string[] = ["observer"];
+/** Agents that are disabled by default. */
+export const DEFAULT_DISABLED_AGENTS: string[] = [];

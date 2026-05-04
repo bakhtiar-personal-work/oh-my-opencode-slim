@@ -125,9 +125,7 @@ export function recordTuiAgentModel(input: {
   });
 }
 
-export function recordAgentDetails(
-  details: Record<string, AgentDetail>,
-): void {
+export function recordAgentDetails(details: Record<string, AgentDetail>): void {
   updateSnapshot((snapshot) => {
     snapshot.agentDetails = { ...details };
   });
