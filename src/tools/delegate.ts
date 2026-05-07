@@ -42,6 +42,7 @@ export function createDelegateTools(
     parentSessionId: string,
     agent: string,
     variant?: string,
+    mode?: 'blocking' | 'fire_forget',
   ): void {
     recordSessionNode({
       sessionID: sessionId,
@@ -49,6 +50,7 @@ export function createDelegateTools(
       agent,
       variant,
       parentId: parentSessionId,
+      mode,
     });
     updateSnapshot((snapshot) => {
       const parent = snapshot.sessionTree[parentSessionId];
@@ -99,6 +101,7 @@ export function createDelegateTools(
         options.parentSessionId,
         options.agent,
         options.variant,
+        'blocking',
       );
 
       if (depthTracker) {
@@ -150,7 +153,14 @@ export function createDelegateTools(
       return extraction.text;
     } finally {
       if (sessionId) {
-        ctx.client.session.abort({ path: { id: sessionId } }).catch(() => {});
+        try {
+          await Promise.race([
+            ctx.client.session.abort({ path: { id: sessionId } }),
+            new Promise((r) => setTimeout(r, 2000)),
+          ]);
+        } catch {
+          /* abort may fail if session already disposed */
+        }
         if (depthTracker) {
           depthTracker.cleanup(sessionId);
         }
@@ -232,6 +242,7 @@ export function createDelegateTools(
             parentSessionId,
             agentName,
             effectiveVariant,
+            'fire_forget',
           );
 
           if (depthTracker) {

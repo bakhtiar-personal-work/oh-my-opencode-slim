@@ -284,8 +284,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     sessionAgentMap = new Map<string, string>();
     deletingSessions = new Set<string>();
 
-    const PRUNE_DONE_AFTER_MS = 5 * 60 * 1000;
-
     reconcileSessions = async (): Promise<void> => {
       try {
         const result = await ctx.client.session.status({});
@@ -302,49 +300,60 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           }
         });
 
+        // Single source of truth: OpenCode's session list.
+        // Delete anything in our state that OpenCode no longer tracks.
         const opencodeIds = new Set(Object.keys(statuses));
         const snap = readTuiSnapshot();
 
-        // Remove in-memory tracked sessions absent from OpenCode
+        // Collect stale IDs from both memory and file
+        const idsToDelete = new Set<string>();
         for (const sid of Object.keys(sessionTreeStore)) {
-          if (!opencodeIds.has(sid)) {
-            sessionAgentMap.delete(sid);
-            recordSessionEnd(sid);
-            recordSessionDone(sid);
-            delete sessionTreeStore[sid];
-            if (depthTracker) depthTracker.cleanup(sid);
-            deletingSessions.delete(sid);
-          }
+          if (!opencodeIds.has(sid)) idsToDelete.add(sid);
         }
-
-        // Remove snapshot-only entries absent from OpenCode
-        const staleTreeIds: string[] = [];
-        const staleActiveIds: string[] = [];
         for (const sid of Object.keys(snap.sessionTree)) {
           if (sessionTreeStore[sid]) continue;
-          if (!statuses[sid]) staleTreeIds.push(sid);
+          if (!opencodeIds.has(sid)) idsToDelete.add(sid);
         }
         for (const sid of Object.keys(snap.activeSessions)) {
-          if (!statuses[sid]) staleActiveIds.push(sid);
-        }
-        if (staleTreeIds.length > 0 || staleActiveIds.length > 0) {
-          updateSnapshot((s) => {
-            for (const sid of staleTreeIds) delete s.sessionTree[sid];
-            for (const sid of staleActiveIds) delete s.activeSessions[sid];
-          });
+          if (!opencodeIds.has(sid)) idsToDelete.add(sid);
         }
 
-        // Prune old done sessions from in-memory store
-        const now = Date.now();
-        for (const [sid, node] of Object.entries(sessionTreeStore)) {
-          if (
-            node.status === 'done' &&
-            node.finishedAt &&
-            now - node.finishedAt > PRUNE_DONE_AFTER_MS
-          ) {
-            delete sessionTreeStore[sid];
+        // Cascade: when a parent is deleted, delete its children too
+        // (children may not be in opencodeIds if they were orphaned)
+        const allNodes = { ...snap.sessionTree, ...sessionTreeStore };
+        let added: boolean;
+        do {
+          added = false;
+          for (const [sid, node] of Object.entries(allNodes)) {
+            if (idsToDelete.has(sid)) continue;
+            if (node.parentId && idsToDelete.has(node.parentId)) {
+              idsToDelete.add(sid);
+              added = true;
+            }
           }
+        } while (added);
+
+        if (idsToDelete.size === 0) return;
+
+        // Clean in-memory state
+        for (const sid of idsToDelete) {
+          sessionAgentMap.delete(sid);
+          delete sessionTreeStore[sid];
+          if (depthTracker) depthTracker.cleanup(sid);
+          deletingSessions.delete(sid);
         }
+
+        // Clean persisted file — single pass, no two-phase dance
+        updateSnapshot((s) => {
+          for (const sid of idsToDelete) {
+            delete s.sessionTree[sid];
+            delete s.activeSessions[sid];
+            delete s.sessionStatuses[sid];
+            delete s.sessionModels[sid];
+            delete s.sessionVariants[sid];
+            delete s.sessionFinished[sid];
+          }
+        });
       } catch {
         // best-effort — silent
       }
@@ -920,18 +929,44 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }
         if (sessionID && statusType === 'idle') {
           if (sessionAgentMap.get(sessionID) === 'orchestrator') {
+            // Cascade abort: stop any still-running blocking children
+            const snapshot = readTuiSnapshot();
+            for (const [childId, child] of Object.entries(
+              snapshot.sessionTree,
+            )) {
+              if (
+                child.parentId === sessionID &&
+                child.status === 'busy' &&
+                child.mode !== 'fire_forget'
+              ) {
+                ctx.client.session
+                  .abort({ path: { id: childId } })
+                  .catch(() => {});
+              }
+            }
             recordSessionNode({
               sessionID,
               title: '',
               agent: 'orchestrator',
               status: 'idle',
             });
+            // Set finishedAt with a 3-second buffer so the orchestrator's
+            // flash timer starts AFTER children have cleared from the tree.
+            // Children were just marked idle (recordSessionDone) and need
+            // FLASH_DURATION_MS+1s to flash out. The orchestrator shows a
+            // spinner while children are visible, then flashes after they clear.
+            updateSnapshot((s) => {
+              const node = s.sessionTree[sessionID];
+              if (node) node.finishedAt = Date.now() + 3000;
+            });
+            const storeNode = sessionTreeStore[sessionID];
+            if (storeNode) storeNode.finishedAt = Date.now() + 3000;
           } else {
             recordSessionEnd(sessionID);
             recordSessionDone(sessionID);
           }
         }
-        if (sessionID && (statusType === 'running' || statusType === 'busy')) {
+        if (sessionID && (statusType === 'busy' || statusType === 'retry')) {
           const agent = sessionAgentMap.get(sessionID);
           if (agent === 'orchestrator') {
             recordOrchestratorActivity();
@@ -1087,7 +1122,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
               ? `${input.model.providerID}/${input.model.modelID}`
               : undefined,
             variant: input.variant,
-            status: 'running',
+            status: 'busy',
           });
         }
       }

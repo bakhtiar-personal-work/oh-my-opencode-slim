@@ -105,15 +105,32 @@ function buildOrchestratingRows(
 
   for (const [id, node] of Object.entries(tree)) {
     if (node.agent !== 'orchestrator') continue;
-    if (node.status === 'running') {
+    if (node.status === 'busy' || node.status === 'retry') {
       visibleOrchSessions.push([id, node]);
-    } else if (node.status === 'done' && node.finishedAt) {
-      const elapsed = now - node.finishedAt;
-      if (elapsed < FLASH_DURATION_MS + 1000) {
+    } else if (node.status === 'idle') {
+      // Check if any children are still visible (running or flashing)
+      const hasVisibleChildren = Object.entries(tree).some(
+        ([_cid, cnode]) =>
+          cnode.parentId === id &&
+          (cnode.status === 'busy' ||
+            cnode.status === 'retry' ||
+            (cnode.status === 'idle' &&
+              cnode.finishedAt &&
+              now - cnode.finishedAt < FLASH_DURATION_MS + 1000)),
+      );
+      if (hasVisibleChildren) {
+        // Children still active — keep orchestrator visible (will show spinner)
+        visibleOrchSessions.push([id, node]);
+      } else if (node.finishedAt) {
+        // No children — flash timeout applies
+        const elapsed = now - node.finishedAt;
+        if (elapsed < FLASH_DURATION_MS + 1000) {
+          visibleOrchSessions.push([id, node]);
+        }
+      } else {
+        // Idle without finishedAt (edge case)
         visibleOrchSessions.push([id, node]);
       }
-    } else if (node.status === 'idle') {
-      visibleOrchSessions.push([id, node]);
     }
   }
 
@@ -137,9 +154,9 @@ function buildOrchestratingRows(
     const visibleChildren: Array<{ childId: string; child: SessionNode }> = [];
     for (const [childId, child] of Object.entries(tree)) {
       if (child.parentId !== orchId) continue;
-      if (child.status === 'running') {
+      if (child.status === 'busy' || child.status === 'retry') {
         visibleChildren.push({ childId, child });
-      } else if (child.status === 'done' && child.finishedAt) {
+      } else if (child.status === 'idle' && child.finishedAt) {
         const elapsed = now - child.finishedAt;
         if (elapsed < FLASH_DURATION_MS + 1000) {
           visibleChildren.push({ childId, child });
@@ -147,14 +164,19 @@ function buildOrchestratingRows(
       }
     }
 
-    // Orchestrator flash dot
+    // Orchestrator dot: spinner while busy or while idle but children still
+    // visible; flash dot only when idle AND all children have cleared.
+    const orchShowSpinner =
+      orchNode.status === 'busy' ||
+      orchNode.status === 'retry' ||
+      (orchNode.status === 'idle' && visibleChildren.length > 0);
     const orchFlash =
-      (orchNode.status === 'done' &&
-        orchNode.finishedAt &&
-        Math.floor((now - orchNode.finishedAt) / 200) % 2 === 0) ||
-      (orchNode.status === 'idle' && Math.floor(now / 200) % 2 === 0);
-    const orchDot =
-      orchNode.status === 'running' ? spinner : orchFlash ? '·' : ' ';
+      orchNode.status === 'idle' &&
+      !orchShowSpinner &&
+      orchNode.finishedAt &&
+      now >= orchNode.finishedAt &&
+      Math.floor((now - orchNode.finishedAt) / 200) % 2 === 0;
+    const orchDot = orchShowSpinner ? spinner : orchFlash ? '·' : ' ';
 
     rows.push(
       box({ flexDirection: 'row' }, [
@@ -189,13 +211,17 @@ function buildOrchestratingRows(
       const pipeChar = isLast ? ' ' : '│';
       const childModel = child.model ? formatSidebarModelName(child.model) : '';
 
-      // Flash dot for done children
+      // Flash dot for idle (completed) children
       const childFlash =
-        child.status === 'done' &&
+        child.status === 'idle' &&
         child.finishedAt &&
         Math.floor((now - child.finishedAt) / 200) % 2 === 0;
       const indicator =
-        child.status === 'running' ? spinner : childFlash ? '·' : ' ';
+        child.status === 'busy' || child.status === 'retry'
+          ? spinner
+          : childFlash
+            ? '·'
+            : ' ';
 
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
@@ -215,9 +241,8 @@ function buildOrchestratingRows(
             justifyContent: 'space-between',
           },
           [
-            text({ fg: theme.text }, [`  ${pipeChar}`]),
             text({ fg: theme.textMuted }, [
-              `  ${childModel}${childVariant ? ` - ${childVariant}` : ''}`,
+              `${`  ${pipeChar}`.padEnd(7)}${childModel}${childVariant ? ` - ${childVariant}` : ''}`,
             ]),
             text({ fg: theme.textMuted }, [childStatusText]),
           ],
@@ -238,12 +263,33 @@ function getActiveSessions(snapshot: TuiSnapshot, now: number): SessionEntry[] {
     const agentName = node.agent;
     if (!agentName) continue;
 
-    if (node.status === 'running') {
+    if (node.status === 'busy' || node.status === 'retry') {
       entries.push({ sessionID, agentName, running: true, finished: false });
-    } else if (node.status === 'done' && node.finishedAt) {
+    } else if (node.status === 'idle' && node.finishedAt) {
+      // For the orchestrator, don't flash until all children have cleared.
+      // Show spinner (running: true) while any child is still visible.
+      let running = false;
+      if (agentName === 'orchestrator') {
+        const tree = snapshot.sessionTree ?? {};
+        const hasVisibleChildren = Object.entries(tree).some(
+          ([_cid, cnode]) =>
+            cnode.parentId === sessionID &&
+            (cnode.status === 'busy' ||
+              cnode.status === 'retry' ||
+              (cnode.status === 'idle' &&
+                cnode.finishedAt &&
+                now - cnode.finishedAt < FLASH_DURATION_MS + 1000)),
+        );
+        if (hasVisibleChildren) running = true;
+      }
       // Account for polling delay: TUI may not see the finish until 1s later
       if (now - node.finishedAt < FLASH_DURATION_MS + 1000) {
-        entries.push({ sessionID, agentName, running: false, finished: true });
+        entries.push({
+          sessionID,
+          agentName,
+          running,
+          finished: !running,
+        });
       }
     }
   }
@@ -490,36 +536,36 @@ function renderSidebar(
       ...agentRows,
       ...(orchestratingRows.length > 0
         ? [
-            box({ width: '100%', height: 1 }),
-            box(
-              {
-                width: '100%',
-                flexDirection: 'column',
-                border: BORDER,
-                borderColor: theme.borderActive,
-                paddingTop: 0,
-                paddingBottom: 0,
-                paddingLeft: 0,
-                paddingRight: 0,
-              },
-              [
-                box(
-                  {
-                    width: '100%',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                  },
-                  [
-                    text({ fg: theme.text }, ['Orchestrating']),
-                    text({ fg: theme.textMuted }, [
-                      `[${orchestratingRows[0] as string}]`,
-                    ]),
-                  ],
-                ),
-                ...(orchestratingRows.slice(1) as Child[]),
-              ],
-            ),
-          ]
+          box({ width: '100%', height: 1 }),
+          box(
+            {
+              width: '100%',
+              flexDirection: 'column',
+              border: BORDER,
+              borderColor: theme.borderActive,
+              paddingTop: 0,
+              paddingBottom: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+            },
+            [
+              box(
+                {
+                  width: '100%',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                },
+                [
+                  text({ fg: theme.text }, ['Orchestrating']),
+                  text({ fg: theme.textMuted }, [
+                    `[${orchestratingRows[0] as string}]`,
+                  ]),
+                ],
+              ),
+              ...(orchestratingRows.slice(1) as Child[]),
+            ],
+          ),
+        ]
         : []),
     ],
   );

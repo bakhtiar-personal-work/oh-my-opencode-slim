@@ -19,7 +19,8 @@ export interface SessionNode {
   variant?: string;
   parentId?: string;
   childIds: string[];
-  status: 'running' | 'done' | 'idle';
+  status: 'busy' | 'idle' | 'retry';
+  mode?: 'blocking' | 'fire_forget';
   createdAt: number;
   finishedAt?: number;
 }
@@ -229,7 +230,8 @@ export function recordSessionNode(input: {
   model?: string;
   variant?: string;
   parentId?: string;
-  status?: 'running' | 'done' | 'idle';
+  mode?: 'blocking' | 'fire_forget';
+  status?: 'busy' | 'idle' | 'retry';
 }): void {
   updateSnapshot((snapshot) => {
     const existing = sessionTreeStore[input.sessionID] ??
@@ -238,7 +240,7 @@ export function recordSessionNode(input: {
         agent: '',
         model: '',
         childIds: [],
-        status: 'running' as const,
+        status: 'busy' as const,
         createdAt: Date.now(),
       };
     const node = {
@@ -249,6 +251,7 @@ export function recordSessionNode(input: {
       variant: input.variant !== undefined ? input.variant : existing.variant,
       parentId:
         input.parentId !== undefined ? input.parentId : existing.parentId,
+      mode: input.mode !== undefined ? input.mode : existing.mode,
       status: input.status ?? existing.status,
       createdAt: existing.createdAt,
     };
@@ -261,13 +264,13 @@ export function recordSessionDone(sessionID: string): void {
   updateSnapshot((snapshot) => {
     const node = snapshot.sessionTree[sessionID];
     if (node) {
-      node.status = 'done';
+      node.status = 'idle';
       node.finishedAt = Date.now();
     }
     // Also sync to in-memory store (file-read is a different object ref)
     const storeNode = sessionTreeStore[sessionID];
     if (storeNode) {
-      storeNode.status = 'done';
+      storeNode.status = 'idle';
       storeNode.finishedAt = Date.now();
     }
   });
