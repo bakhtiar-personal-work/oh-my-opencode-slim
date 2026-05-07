@@ -77,6 +77,10 @@ export function getSidebarAgentNames(snapshot: TuiSnapshot): string[] {
 
 const FLASH_DURATION_MS = 2000;
 
+function getStatusText(snapshot: TuiSnapshot, sessionID: string): string {
+  return snapshot.sessionStatuses?.[sessionID] ?? '-';
+}
+
 function getSpinnerChar(now: number): string {
   return SPINNER_FRAMES[Math.floor(now / 80) % SPINNER_FRAMES.length];
 }
@@ -108,6 +112,8 @@ function buildOrchestratingRows(
       if (elapsed < FLASH_DURATION_MS + 1000) {
         visibleOrchSessions.push([id, node]);
       }
+    } else if (node.status === 'idle') {
+      visibleOrchSessions.push([id, node]);
     }
   }
 
@@ -143,18 +149,22 @@ function buildOrchestratingRows(
 
     // Orchestrator flash dot
     const orchFlash =
-      orchNode.status === 'done' &&
-      orchNode.finishedAt &&
-      Math.floor((now - orchNode.finishedAt) / 200) % 2 === 0;
+      (orchNode.status === 'done' &&
+        orchNode.finishedAt &&
+        Math.floor((now - orchNode.finishedAt) / 200) % 2 === 0) ||
+      (orchNode.status === 'idle' && Math.floor(now / 200) % 2 === 0);
     const orchDot =
       orchNode.status === 'running' ? spinner : orchFlash ? '·' : ' ';
 
     rows.push(
       box({ flexDirection: 'row' }, [
-        text({ fg: theme.text }, [`${orchDot} `]),
+        text({ fg: theme.accent }, [`${orchDot} `]),
         text({ fg: theme.text }, [truncate(orchNode.title || orchId, 28)]),
       ]),
     );
+    const orchVariant =
+      orchNode.variant ?? snapshot.agentDetails?.orchestrator?.variant;
+    const orchStatusText = getStatusText(snapshot, orchId);
     rows.push(
       box(
         {
@@ -163,23 +173,21 @@ function buildOrchestratingRows(
           justifyContent: 'space-between',
         },
         [
-          text({ fg: theme.textMuted }, [`  ${modelStr}`]),
-          orchNode.variant
-            ? text({ fg: theme.textMuted }, [orchNode.variant])
-            : null,
+          text({ fg: theme.textMuted }, [
+            `  ${modelStr}${orchVariant ? ` - ${orchVariant}` : ''}`,
+          ]),
+          text({ fg: theme.textMuted }, [orchStatusText]),
         ],
       ),
     );
 
     // Children
-    let totalFileCount = 0;
     for (let i = 0; i < visibleChildren.length; i++) {
-      const { childId: _childId, child } = visibleChildren[i];
+      const { childId, child } = visibleChildren[i];
       const isLast = i === visibleChildren.length - 1;
       const branchChar = isLast ? '└' : '├';
       const pipeChar = isLast ? ' ' : '│';
       const childModel = child.model ? formatSidebarModelName(child.model) : '';
-      totalFileCount += child.fileCount;
 
       // Flash dot for done children
       const childFlash =
@@ -191,9 +199,14 @@ function buildOrchestratingRows(
 
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.accent }, [`  ${branchChar}─ ${child.agent}`]),
+          text({ fg: theme.text }, [
+            `  ${branchChar}─ ${indicator} ${child.agent}`,
+          ]),
         ]),
       );
+      const childVariant =
+        child.variant ?? snapshot.agentDetails?.[child.agent]?.variant;
+      const childStatusText = getStatusText(snapshot, childId);
       rows.push(
         box(
           {
@@ -202,30 +215,16 @@ function buildOrchestratingRows(
             justifyContent: 'space-between',
           },
           [
-            text({ fg: theme.textMuted }, [`  ${pipeChar}  ${childModel}`]),
+            text({ fg: theme.text }, [`  ${pipeChar}`]),
             text({ fg: theme.textMuted }, [
-              child.variant ? child.variant : '',
-              ` ${indicator}`,
+              `  ${childModel}${childVariant ? ` - ${childVariant}` : ''}`,
             ]),
+            text({ fg: theme.textMuted }, [childStatusText]),
           ],
         ),
       );
-      rows.push(
-        box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.textMuted }, [
-            `  ${pipeChar}  ${child.fileCount} file${child.fileCount !== 1 ? 's' : ''}`,
-          ]),
-        ]),
-      );
     }
 
-    // Totals
-    rows.push(text({ fg: theme.textMuted }, [`  ${'─'.repeat(22)}`]));
-    rows.push(
-      text({ fg: theme.textMuted }, [
-        `  Total: ${visibleChildren.length} agent${visibleChildren.length !== 1 ? 's' : ''} · ${totalFileCount} file${totalFileCount !== 1 ? 's' : ''}`,
-      ]),
-    );
     rows.push(box({ width: '100%', height: 1 }));
   }
 
@@ -358,6 +357,7 @@ function renderSidebar(
     );
 
     const modelStr = truncate(model, 20).padEnd(8);
+    const statusText = getStatusText(snapshot, sessionID);
 
     agentRows.push(
       box(
@@ -367,8 +367,10 @@ function renderSidebar(
           justifyContent: 'space-between',
         },
         [
-          text({ fg: theme.textMuted }, [`  ${modelStr}`]),
-          variant ? text({ fg: theme.textMuted }, [variant]) : null,
+          text({ fg: theme.textMuted }, [
+            `  ${modelStr}${variant ? ` - ${variant}` : ''}`,
+          ]),
+          text({ fg: theme.textMuted }, [statusText]),
         ],
       ),
     );
@@ -419,6 +421,7 @@ function renderSidebar(
       const indicator = running ? spinner : flashDot ? '·' : ' ';
       const nameStr = truncate(agentName, 16);
       const modelStr = truncate(model, 20).padEnd(8);
+      const customStatusText = getStatusText(snapshot, sessionID);
 
       agentRows.push(
         box(
@@ -445,8 +448,10 @@ function renderSidebar(
             justifyContent: 'space-between',
           },
           [
-            text({ fg: theme.textMuted }, [`  ${modelStr}`]),
-            variant ? text({ fg: theme.textMuted }, [variant]) : null,
+            text({ fg: theme.textMuted }, [
+              `  ${modelStr}${variant ? ` - ${variant}` : ''}`,
+            ]),
+            text({ fg: theme.textMuted }, [customStatusText]),
           ],
         ),
       );

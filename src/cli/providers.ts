@@ -52,7 +52,7 @@ export const MODEL_MAPPINGS = {
     librarian: { model: 'opencode-go/minimax-m2.7' },
     explorer: { model: 'opencode-go/minimax-m2.7' },
     designer: { model: 'opencode-go/kimi-k2.6', variant: 'medium' },
-    fixer: { model: 'opencode-go/deepseek-v4-flash', variant: 'high' },
+    fixer: { model: 'opencode-go/deepseek-v4-flash', variant: 'low' },
   },
 } as const;
 

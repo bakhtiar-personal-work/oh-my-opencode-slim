@@ -44,6 +44,7 @@ import {
   createWebfetchTool,
 } from './tools';
 import {
+  readTuiSnapshot,
   recordAgentDetails,
   recordOrchestratorActivity,
   recordSessionDone,
@@ -53,6 +54,7 @@ import {
   recordSessionStart,
   recordSessionVariant,
   recordTuiAgentModels,
+  sessionTreeStore,
   updateSnapshot,
 } from './tui-state';
 import {
@@ -136,6 +138,8 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     typeof createFilterAvailableSkillsHook
   >;
   let sessionAgentMap: Map<string, string>;
+  let deletingSessions: Set<string>;
+  let reconcileSessions!: () => Promise<void>;
   let postFileToolNudgeHook: ReturnType<typeof createPostFileToolNudgeHook>;
   let chatHeadersHook: ReturnType<typeof createChatHeadersHook>;
   let delegateTaskRetryHook: ReturnType<typeof createDelegateTaskRetryHook>;
@@ -278,6 +282,73 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
     // Track session → agent mapping for serve-mode system prompt injection
     sessionAgentMap = new Map<string, string>();
+    deletingSessions = new Set<string>();
+
+    const PRUNE_DONE_AFTER_MS = 5 * 60 * 1000;
+
+    reconcileSessions = async (): Promise<void> => {
+      try {
+        const result = await ctx.client.session.status({});
+        const statuses = result.data as
+          | Record<string, { type: string }>
+          | undefined;
+        if (!statuses) return;
+
+        // Write OpenCode statuses for sidebar diagnostic display
+        updateSnapshot((s) => {
+          s.sessionStatuses = {};
+          for (const [sid, st] of Object.entries(statuses)) {
+            s.sessionStatuses[sid] = st.type;
+          }
+        });
+
+        const opencodeIds = new Set(Object.keys(statuses));
+        const snap = readTuiSnapshot();
+
+        // Remove in-memory tracked sessions absent from OpenCode
+        for (const sid of Object.keys(sessionTreeStore)) {
+          if (!opencodeIds.has(sid)) {
+            sessionAgentMap.delete(sid);
+            recordSessionEnd(sid);
+            recordSessionDone(sid);
+            delete sessionTreeStore[sid];
+            if (depthTracker) depthTracker.cleanup(sid);
+            deletingSessions.delete(sid);
+          }
+        }
+
+        // Remove snapshot-only entries absent from OpenCode
+        const staleTreeIds: string[] = [];
+        const staleActiveIds: string[] = [];
+        for (const sid of Object.keys(snap.sessionTree)) {
+          if (sessionTreeStore[sid]) continue;
+          if (!statuses[sid]) staleTreeIds.push(sid);
+        }
+        for (const sid of Object.keys(snap.activeSessions)) {
+          if (!statuses[sid]) staleActiveIds.push(sid);
+        }
+        if (staleTreeIds.length > 0 || staleActiveIds.length > 0) {
+          updateSnapshot((s) => {
+            for (const sid of staleTreeIds) delete s.sessionTree[sid];
+            for (const sid of staleActiveIds) delete s.activeSessions[sid];
+          });
+        }
+
+        // Prune old done sessions from in-memory store
+        const now = Date.now();
+        for (const [sid, node] of Object.entries(sessionTreeStore)) {
+          if (
+            node.status === 'done' &&
+            node.finishedAt &&
+            now - node.finishedAt > PRUNE_DONE_AFTER_MS
+          ) {
+            delete sessionTreeStore[sid];
+          }
+        }
+      } catch {
+        // best-effort — silent
+      }
+    };
 
     // Initialize post-file-tool nudge hook
     postFileToolNudgeHook = createPostFileToolNudgeHook({
@@ -316,16 +387,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       readContextMaxFiles: config.sessionManager?.readContextMaxFiles ?? 8,
       shouldManageSession: (sessionID) =>
         sessionAgentMap.get(sessionID) === 'orchestrator',
-      onContextUpdated: (fileCountBySession) => {
-        for (const [sessionId, count] of Object.entries(fileCountBySession)) {
-          updateSnapshot((snapshot) => {
-            const node = snapshot.sessionTree[sessionId];
-            if (node) {
-              node.fileCount = count;
-            }
-          });
-        }
-      },
     });
     interviewManager = createInterviewManager(ctx, config);
     presetManager = createPresetManager(ctx, config);
@@ -390,6 +451,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       appLog(ctx, 'warn', msg).catch(() => {});
     }
   });
+
+  // ── Reconcile tracking state with OpenCode's actual sessions ───────
+  // Startup sync cleans remnants from previous runs/crashes.
+  reconcileSessions().catch(() => {});
 
   return {
     name: 'oh-my-opencode-slim',
@@ -770,6 +835,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             sessionID?: string;
           };
           sessionID?: string;
+          error?: { name?: string };
           status?: { type: string };
         };
       };
@@ -800,7 +866,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         const childSessionId = event.properties?.info?.id;
         const parentSessionId = event.properties?.info?.parentID;
         const title = event.properties?.info?.title;
-        const agent = event.properties?.info?.agent;
         if (depthTracker && childSessionId && parentSessionId) {
           depthTracker.registerChild(parentSessionId, childSessionId);
         }
@@ -808,7 +873,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           recordSessionNode({
             sessionID: childSessionId,
             title: title ?? '',
-            agent: agent ?? '',
+            agent: '',
             parentId: parentSessionId,
           });
         }
@@ -820,6 +885,11 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
               parent.childIds.push(childSessionId);
             }
           });
+          // Also sync the in-memory store so childIds are available
+          const storeParent = sessionTreeStore[parentSessionId];
+          if (storeParent && !storeParent.childIds.includes(childSessionId)) {
+            storeParent.childIds.push(childSessionId);
+          }
         }
       }
 
@@ -838,29 +908,38 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       // Handle session.status events for pane cleanup
       await multiplexerSessionManager.onSessionStatus(event);
 
-      // Track session.status to update sidebar active counts + session tree
+      // Track session.status to update sidebar status display and
+      // active session counts. Non-orchestrator idle means done.
       if (event.type === 'session.status') {
         const statusType = event.properties?.status?.type;
-        const sessionID =
-          event.properties?.info?.id ?? event.properties?.sessionID;
-        if (sessionID) {
-          if (
-            statusType === 'idle' ||
-            statusType === 'completed' ||
-            statusType === 'error'
-          ) {
+        const sessionID = event.properties?.sessionID;
+        if (sessionID && statusType) {
+          updateSnapshot((s) => {
+            s.sessionStatuses[sessionID] = statusType;
+          });
+        }
+        if (sessionID && statusType === 'idle') {
+          if (sessionAgentMap.get(sessionID) === 'orchestrator') {
+            recordSessionNode({
+              sessionID,
+              title: '',
+              agent: 'orchestrator',
+              status: 'idle',
+            });
+          } else {
             recordSessionEnd(sessionID);
             recordSessionDone(sessionID);
-          } else if (statusType === 'running' || statusType === 'busy') {
-            const agent = sessionAgentMap.get(sessionID);
-            if (agent === 'orchestrator') {
-              recordOrchestratorActivity();
-            } else if (agent) {
-              recordSessionStart({
-                sessionID,
-                agentName: agent,
-              });
-            }
+          }
+        }
+        if (sessionID && (statusType === 'running' || statusType === 'busy')) {
+          const agent = sessionAgentMap.get(sessionID);
+          if (agent === 'orchestrator') {
+            recordOrchestratorActivity();
+          } else if (agent) {
+            recordSessionStart({
+              sessionID,
+              agentName: agent,
+            });
           }
         }
       }
@@ -883,21 +962,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         },
       );
 
-      if (input.event.type === 'session.deleted') {
-        const props = input.event.properties as
-          | { info?: { id?: string }; sessionID?: string }
-          | undefined;
-        const sessionID = props?.info?.id ?? props?.sessionID;
-
-        if (depthTracker && sessionID) {
-          depthTracker.cleanup(sessionID);
-        }
+      if (event.type === 'session.deleted') {
+        const sessionID =
+          event.properties?.info?.id ?? event.properties?.sessionID;
         if (sessionID) {
           sessionAgentMap.delete(sessionID);
           recordSessionEnd(sessionID);
-          // Mark done so flash dot shows before natural expiry in TUI render.
-          // We don't delete — the TUI render handles expiry via elapsed > FLASH_DURATION_MS.
           recordSessionDone(sessionID);
+          delete sessionTreeStore[sessionID];
+          if (depthTracker) depthTracker.cleanup(sessionID);
+          deletingSessions.delete(sessionID);
         }
       }
     },

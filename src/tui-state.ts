@@ -17,10 +17,9 @@ export interface SessionNode {
   agent: string;
   model: string;
   variant?: string;
-  fileCount: number;
   parentId?: string;
   childIds: string[];
-  status: 'running' | 'done';
+  status: 'running' | 'done' | 'idle';
   createdAt: number;
   finishedAt?: number;
 }
@@ -37,6 +36,7 @@ export interface TuiSnapshot {
   sessionVariants: Record<string, string>;
   sessionFinished: Record<string, SessionFinish>;
   sessionTree: Record<string, SessionNode>;
+  sessionStatuses: Record<string, string>;
 }
 
 /** In-memory session tree store — shared between main plugin and TUI.
@@ -71,6 +71,7 @@ function emptySnapshot(): TuiSnapshot {
     sessionVariants: {},
     sessionFinished: {},
     sessionTree: {},
+    sessionStatuses: {},
   };
 }
 
@@ -94,6 +95,7 @@ function parseSnapshot(value: string): TuiSnapshot {
     sessionVariants: parsed.sessionVariants ?? {},
     sessionFinished: parsed.sessionFinished ?? {},
     sessionTree: parsed.sessionTree ?? {},
+    sessionStatuses: parsed.sessionStatuses ?? {},
   };
 }
 
@@ -227,8 +229,7 @@ export function recordSessionNode(input: {
   model?: string;
   variant?: string;
   parentId?: string;
-  fileCount?: number;
-  status?: 'running' | 'done';
+  status?: 'running' | 'done' | 'idle';
 }): void {
   updateSnapshot((snapshot) => {
     const existing = sessionTreeStore[input.sessionID] ??
@@ -236,7 +237,6 @@ export function recordSessionNode(input: {
         title: '',
         agent: '',
         model: '',
-        fileCount: 0,
         childIds: [],
         status: 'running' as const,
         createdAt: Date.now(),
@@ -249,7 +249,6 @@ export function recordSessionNode(input: {
       variant: input.variant !== undefined ? input.variant : existing.variant,
       parentId:
         input.parentId !== undefined ? input.parentId : existing.parentId,
-      fileCount: input.fileCount ?? existing.fileCount,
       status: input.status ?? existing.status,
       createdAt: existing.createdAt,
     };

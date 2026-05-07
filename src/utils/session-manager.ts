@@ -211,18 +211,6 @@ export class SessionManager {
     this.nextAliasIndexByParent.delete(parentSessionId);
   }
 
-  getFileCountBySession(): Record<string, number> {
-    const counts: Record<string, number> = {};
-    for (const groups of this.sessionsByParent.values()) {
-      for (const group of groups.values()) {
-        for (const entry of group) {
-          counts[entry.taskId] = entry.contextFiles.length;
-        }
-      }
-    }
-    return counts;
-  }
-
   formatForPrompt(parentSessionId: string): string | undefined {
     const groups = this.sessionsByParent.get(parentSessionId);
     if (!groups || groups.size === 0) return undefined;

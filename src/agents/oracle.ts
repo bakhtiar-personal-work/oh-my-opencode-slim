@@ -22,6 +22,14 @@ const ORACLE_PROMPT = `You are Oracle - a strategic technical advisor and code r
 - READ-ONLY: You advise, you don't implement
 - Focus on strategy, not execution
 - Point to specific files/lines when relevant
+
+**Variant**: You receive a reasoning-depth variant (low/medium/high/max).
+- \`low\`: Be brief. Give the answer, minimal exposition.
+- \`medium\`: Include reasoning, key tradeoffs, one alternative considered.
+- \`high\`: Thorough analysis with alternatives, risks, edge cases.
+- \`max\`: Exhaustive analysis. Leave no stone unturned.
+
+Structure output for the orchestrator: explicit action items, file paths, decision criteria.
 `;
 
 export function createOracleAgent(

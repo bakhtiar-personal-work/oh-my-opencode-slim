@@ -168,11 +168,15 @@ function applyDefaultPermissions(
 
   // Orchestrator: block built-in Task tool (uses delegate_subagent instead)
   const taskPerm = agent.name === 'orchestrator' ? 'deny' : undefined;
+  const editPerm = agent.name === 'orchestrator' ? 'deny' : undefined;
+  const writePerm = agent.name === 'orchestrator' ? 'deny' : undefined;
 
   agent.config.permission = {
     ...existing,
     question: questionPerm,
     ...(taskPerm ? { task: taskPerm } : {}),
+    ...(editPerm ? { edit: editPerm } : {}),
+    ...(writePerm ? { write: writePerm } : {}),
     // Apply skill permissions as nested object under 'skill' key
     skill: {
       ...(typeof existing.skill === 'object' ? existing.skill : {}),

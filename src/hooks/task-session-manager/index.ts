@@ -113,7 +113,6 @@ export function createTaskSessionManagerHook(
     readContextMinLines?: number;
     readContextMaxFiles?: number;
     shouldManageSession: (sessionID: string) => boolean;
-    onContextUpdated?: (fileCountBySession: Record<string, number>) => void;
   },
 ) {
   const sessionManager = new SessionManager(options.maxSessionsPerAgent, {
@@ -309,9 +308,6 @@ export function createTaskSessionManagerHook(
             input.sessionID,
             extractReadFiles(_ctx.directory, output),
           );
-          if (options.onContextUpdated) {
-            options.onContextUpdated(sessionManager.getFileCountBySession());
-          }
         }
         return;
       }

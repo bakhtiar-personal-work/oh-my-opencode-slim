@@ -80,7 +80,7 @@ describe('providers', () => {
     expect(agents.explorer.model).toBe('opencode-go/minimax-m2.7');
     expect(agents.designer.model).toBe('opencode-go/kimi-k2.6');
     expect(agents.fixer.model).toBe('opencode-go/deepseek-v4-flash');
-    expect(agents.fixer.variant).toBe('high');
+    expect(agents.fixer.variant).toBe('low');
   });
 
   test('generateLiteConfig rejects unsupported preset', () => {

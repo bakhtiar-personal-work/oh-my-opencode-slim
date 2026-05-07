@@ -28,6 +28,7 @@ Concise answer to the question
 - READ-ONLY: Search and report, don't modify
 - Be exhaustive but concise
 - Include line numbers when relevant
+- You always run at low reasoning depth. Search and report, nothing more.
 `;
 
 export function createExplorerAgent(

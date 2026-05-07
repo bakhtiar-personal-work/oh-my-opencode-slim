@@ -1,11 +1,12 @@
 import type { ToolDefinition } from '@opencode-ai/plugin';
 import { tool } from '@opencode-ai/plugin';
 import type { PluginConfig } from '../config';
-import { DEFAULT_TIMEOUT_MS, TMUX_SPAWN_DELAY_MS } from '../config/constants';
+import { TMUX_SPAWN_DELAY_MS } from '../config/constants';
 import { getAgentOverride } from '../config/utils';
 import {
   recordSessionDone,
   recordSessionNode,
+  sessionTreeStore,
   updateSnapshot,
 } from '../tui-state';
 import {
@@ -25,7 +26,7 @@ const SUBAGENT_OPTIONS = [
   'fixer',
   'designer',
 ] as const;
-const VARIANT_OPTIONS = ['low', 'medium', 'high', 'xhigh'] as const;
+const VARIANT_OPTIONS = ['low', 'medium', 'high', 'max'] as const;
 const MODE_OPTIONS = ['blocking', 'fire_forget'] as const;
 
 export function createDelegateTools(
@@ -40,11 +41,13 @@ export function createDelegateTools(
     sessionId: string,
     parentSessionId: string,
     agent: string,
+    variant?: string,
   ): void {
     recordSessionNode({
       sessionID: sessionId,
       title: '',
       agent,
+      variant,
       parentId: parentSessionId,
     });
     updateSnapshot((snapshot) => {
@@ -53,6 +56,10 @@ export function createDelegateTools(
         parent.childIds.push(sessionId);
       }
     });
+    const storeParent = sessionTreeStore[parentSessionId];
+    if (storeParent && !storeParent.childIds.includes(sessionId)) {
+      storeParent.childIds.push(sessionId);
+    }
   }
 
   async function runAgentSession(options: {
@@ -87,7 +94,12 @@ export function createDelegateTools(
       sessionId = session.data.id;
 
       // Record in session tree directly (bypasses event reliability)
-      recordSessionTree(sessionId, options.parentSessionId, options.agent);
+      recordSessionTree(
+        sessionId,
+        options.parentSessionId,
+        options.agent,
+        options.variant,
+      );
 
       if (depthTracker) {
         const registered = depthTracker.registerChild(
@@ -161,7 +173,7 @@ export function createDelegateTools(
       variant: tool.schema
         .enum(VARIANT_OPTIONS)
         .describe(
-          'Reasoning depth: low (simple), medium (typical), high (complex), xhigh (critical)',
+          'Reasoning depth: low (simple), medium (typical), high (complex), max (critical)',
         ),
       mode: tool.schema
         .enum(MODE_OPTIONS)
@@ -215,7 +227,12 @@ export function createDelegateTools(
           const sessionId = session.data.id;
 
           // Record in session tree directly
-          recordSessionTree(sessionId, parentSessionId, agentName);
+          recordSessionTree(
+            sessionId,
+            parentSessionId,
+            agentName,
+            effectiveVariant,
+          );
 
           if (depthTracker) {
             depthTracker.registerChild(parentSessionId, sessionId);
@@ -255,7 +272,7 @@ export function createDelegateTools(
           model,
           variant: effectiveVariant,
           promptText: args.prompt,
-          timeout: DEFAULT_TIMEOUT_MS,
+          timeout: 0, // no timeout — let subagents run freely
         });
 
         let output = `**${agentName}** (variant: ${effectiveVariant ?? 'default'}):\n\n`;
