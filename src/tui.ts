@@ -223,15 +223,6 @@ function buildOrchestratingRows(
             ? '·'
             : ' ';
 
-      rows.push(
-        box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.text }, [
-            `  ${branchChar}─ ${indicator} ${child.agent}`,
-          ]),
-        ]),
-      );
-      const childVariant =
-        child.variant ?? snapshot.agentDetails?.[child.agent]?.variant;
       const childStatusText = getStatusText(snapshot, childId);
       rows.push(
         box(
@@ -241,12 +232,21 @@ function buildOrchestratingRows(
             justifyContent: 'space-between',
           },
           [
-            text({ fg: theme.textMuted }, [
-              `${`  ${pipeChar}`.padEnd(7)}${childModel}${childVariant ? ` - ${childVariant}` : ''}`,
+            text({ fg: theme.text }, [
+              `  ${branchChar}─ ${indicator} ${child.agent}`,
             ]),
             text({ fg: theme.textMuted }, [childStatusText]),
           ],
         ),
+      );
+      const childVariant =
+        child.variant ?? snapshot.agentDetails?.[child.agent]?.variant;
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.textMuted }, [
+            `${`  ${pipeChar}`.padEnd(7)}${childModel}${childVariant ? ` - ${childVariant}` : ''}`,
+          ]),
+        ]),
       );
     }
 

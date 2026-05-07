@@ -53,10 +53,12 @@ export const SUBAGENT_DELEGATION_RULES: Record<AgentName, readonly string[]> = {
 };
 
 // Default models for each agent
-// orchestrator is undefined so its model is fully resolved at runtime via priority fallback
+// orchestrator prioritizes classification/routing over deep analysis;
+// a fast+smart model at high variant is sufficient (real analysis
+// is delegated to @oracle which has its own variant/model control).
 export const DEFAULT_MODELS: Record<AgentName, string | undefined> = {
-  orchestrator: 'opencode-go/deepseek-v4-pro',
-  oracle: 'opencode-go/deepseek-v4-pro',
+  orchestrator: 'opencode-go/deepseek-v4-flash',
+  oracle: 'opencode-go/deepseek-v4-flash',
   librarian: 'opencode-go/minimax-m2.7',
   explorer: 'opencode-go/minimax-m2.7',
   designer: 'opencode-go/mimo-v2-pro',

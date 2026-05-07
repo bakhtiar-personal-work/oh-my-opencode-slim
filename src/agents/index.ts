@@ -304,8 +304,8 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
   const allSubAgents = [...builtInSubAgents, ...customSubAgents];
 
   // 3. Create Orchestrator (with its own overrides and custom prompts)
-  // DEFAULT_MODELS.orchestrator is undefined; model is resolved via override or
-  // left unset so the runtime chat.message hook can pick it from _modelArray.
+  // Model is resolved from DEFAULT_MODELS.orchestrator (or user override).
+  // TUI /model selector overrides at runtime regardless.
   const orchestratorOverride = getAgentOverride(config, 'orchestrator');
   const orchestratorModel =
     orchestratorOverride?.model ?? DEFAULT_MODELS.orchestrator;
@@ -319,6 +319,28 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
   applyDefaultPermissions(orchestrator, orchestratorOverride?.skills);
   if (orchestratorOverride) {
     applyOverrides(orchestrator, orchestratorOverride);
+  }
+
+  // 3a. Inject oracle model names from config into orchestrator prompt
+  // (avoids hardcoding model IDs in the prompt text)
+  const oracleOverride = getAgentOverride(config, 'oracle');
+  const oracleDefaultModel =
+    typeof oracleOverride?.model === 'string'
+      ? oracleOverride.model
+      : DEFAULT_MODELS.oracle;
+  const oracleOptions = oracleOverride?.options as
+    | Record<string, unknown>
+    | undefined;
+  const oracleSmartModel =
+    typeof oracleOptions?.smart === 'string' ? oracleOptions.smart : '';
+
+  if (
+    typeof orchestrator.config.prompt === 'string' &&
+    (oracleDefaultModel || oracleSmartModel)
+  ) {
+    orchestrator.config.prompt = orchestrator.config.prompt
+      .replace(/\{\{ORACLE_DEFAULT_MODEL\}\}/g, oracleDefaultModel ?? '')
+      .replace(/\{\{ORACLE_SMART_MODEL\}\}/g, oracleSmartModel);
   }
 
   // Collect all display names from orchestrator and all subagents

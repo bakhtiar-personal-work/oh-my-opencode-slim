@@ -46,7 +46,7 @@ export const MODEL_MAPPINGS = {
     fixer: { model: 'zai-coding-plan/glm-5', variant: 'low' },
   },
   'opencode-go': {
-    orchestrator: { model: 'opencode-go/glm-5.1' },
+    orchestrator: { model: 'opencode-go/deepseek-v4-flash', variant: 'high' },
     oracle: { model: 'opencode-go/deepseek-v4-pro', variant: 'max' },
     council: { model: 'opencode-go/deepseek-v4-pro', variant: 'high' },
     librarian: { model: 'opencode-go/minimax-m2.7' },

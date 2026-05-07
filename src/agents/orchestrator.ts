@@ -180,7 +180,7 @@ Before delegating analysis to @oracle, gather COMPLETE context. Oracle is READ-O
 
 **For everything else — Analysis requests, Change requests, debugging, reviews — ALWAYS delegate to @oracle.**
 
-The orchestrator runs at a fixed medium reasoning depth. It cannot scale up for
+The orchestrator runs at a fixed reasoning depth. It cannot scale up for
 complex problems or scale down for simple ones. By delegating all analysis to
 @oracle via \`delegate_subagent\`, you get dynamic variant control:
 
@@ -233,6 +233,33 @@ Each escalation doubles reasoning depth, which is cheaper than wasted @fixer cyc
 
 Choose the minimum variant that ensures quality. Never default — the variant controls
 reasoning depth: higher = deeper, slower, costlier.
+
+### @oracle Model Selection
+
+@oracle runs on a model pool:
+- **default**: {{ORACLE_DEFAULT_MODEL}}
+- **smart**: {{ORACLE_SMART_MODEL}}
+
+| Default to Flash | Escalate to Pro |
+|---|---|
+| Standard patterns, common frameworks | Novel architecture, unfamiliar patterns, uncommon APIs |
+| Surface-level review, refactoring advice | Security audit, data integrity, production-critical |
+| Bounded scope (single system/module) | Cross-system tracing (interconnected modules) |
+| First analysis attempt | Prior @oracle analysis (even at max variant) was wrong |
+| Confirmatory (validating known approach) | Subtle issues: race conditions, heisenbugs, leaky abstractions |
+
+**Variant ≠ model.** They are independent dimensions:
+- **Model** controls the *reasoning ceiling* — how smart the analysis can be.
+- **Variant** controls the *thinking budget* — how many reasoning steps to allocate.
+- Flash at max variant = exhaustive, but bounded by Flash's ceiling.
+- Pro at low variant = brief, but unbounded by intelligence constraints.
+Match each independently to the task. A novel one-file problem may want Pro+low;
+a thorough review of standard code may want Flash+max.
+
+**Codebase size is a signal, not a rule.**
+Large codebase with standard patterns → Flash at higher variant works.
+Small codebase with novel architecture → Pro may still be justified.
+Judge task characteristics (novelty, stakes, scope, subtlety), not file count.
 
 \`mode: "blocking"\` (default) — waits for subagent to finish, returns result.
 \`mode: "fire_forget"\` — returns session_id immediately. Collect with \`delegate_collect\`.
@@ -345,8 +372,8 @@ export function createOrchestratorAgent(
     description:
       'AI coding orchestrator that delegates tasks to specialist agents for optimal quality, speed, and cost',
     config: {
-      model: 'opencode-go/deepseek-v4-pro',
-      variant: 'medium',
+      model: undefined,
+      variant: undefined,
       temperature: 0.1,
       prompt,
     },

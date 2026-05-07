@@ -71,7 +71,8 @@ describe('providers', () => {
     expect((config.presets as any).openai).toBeDefined();
     const agents = (config.presets as any)['opencode-go'];
     expect(agents).toBeDefined();
-    expect(agents.orchestrator.model).toBe('opencode-go/glm-5.1');
+    expect(agents.orchestrator.model).toBe('opencode-go/deepseek-v4-flash');
+    expect(agents.orchestrator.variant).toBe('high');
     expect(agents.oracle.model).toBe('opencode-go/deepseek-v4-pro');
     expect(agents.oracle.variant).toBe('max');
     expect(agents.council.model).toBe('opencode-go/deepseek-v4-pro');
