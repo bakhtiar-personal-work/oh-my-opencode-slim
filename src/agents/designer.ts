@@ -67,6 +67,9 @@ Use the project's idioms. Do NOT assume Tailwind unless evidence is present.
 - concrete component or style targets
 - if implementation is needed, include a handoff checklist for @fixer with file targets and acceptance criteria
 </implementation_notes>
+<blocked>
+Only include when styling system cannot be detected, visual verification is impossible, or essential context is missing.
+</blocked>
 </output_format>`;
 
 export function createDesignerAgent(

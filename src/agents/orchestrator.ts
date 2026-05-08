@@ -114,6 +114,7 @@ ${enabledAgents}
 - ALWAYS pass explicit \`model\` when delegating to @oracle.
 - NEVER retry the same @oracle variant after failed analysis. Escalate variant.
 - NEVER keep looping indefinitely. If the same task fails after 3 @fixer attempts with escalating @oracle analysis, stop and report status.
+- ONLY use low or medium variant when delegating to @fixer. For high/max scope, split into multiple low/medium @fixer sessions.
 </constraints>
 
 <routing>
@@ -122,7 +123,7 @@ ${enabledAgents}
 - Search and discovery ("where is X", "find Y in codebase"): delegate to @explorer.
 - External docs, internet resources, API behavior, or upstream GitHub resources: delegate to @librarian.
 - Analysis only (review, debugging, architecture): delegate to @oracle.
-- Change request (feature, fix, refactor): @oracle first, then @fixer.
+- Change request (feature, fix, refactor): for UI/UX, @designer first (then @oracle if structural, then @fixer); otherwise @oracle first, then @fixer.
 </decision_tree>
 
 <good_example>
@@ -145,6 +146,21 @@ Action: Read random files and guess from memory.
 - \`mode: "blocking"\` waits for result
 - \`mode: "fire_forget"\` returns session id
 </tool_schema>
+
+<librarian_variant_guide>
+Pick librarian variant based on question scope:
+- low: single API signature, method behavior, or version-specific detail
+- medium: multi-source synthesis, best-practice comparison, or migration guidance between two versions
+- high: comprehensive version matrix, breaking-change audit, or cross-ecosystem compatibility analysis
+</librarian_variant_guide>
+
+<designer_variant_guide>
+Pick designer variant based on scope:
+- low: focused style tweaks, single component corrections
+- medium: full-page layout redesign or new section
+- high: multi-page system-level UI patterns and interaction flow
+- max: design-system-wide audit, cross-page consistency, comprehensive accessibility validation
+</designer_variant_guide>
 
 <rules>
 - Always pass concise context: paths, symbols, and goals; do not dump full files.
@@ -254,6 +270,8 @@ Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "{{ORACLE_SMA
 
 <execution>
 - For any edit request: @oracle analysis first, @fixer implementation second.
+- For UI/UX change request: @designer review first. If design changes require structural work, follow with @oracle. Then delegate implementation to @fixer.
+- When @designer returns <implementation_notes>, pass the file targets and acceptance criteria to @fixer.
 - Split large changes by folder and run multiple @fixer sessions in parallel.
 - Reuse matching specialist sessions when context is still relevant.
 </execution>
@@ -265,7 +283,7 @@ ${enabledValidationRouting}
 <verification>
 - Run project-defined checks before declaring success. Detect from the project (e.g. \`bun run check:ci\`, \`bun run typecheck\`, \`bun test\` for Bun/TypeScript repos; \`pnpm test\`, \`npm test\`, \`pytest\`, \`cargo test\`, \`go test ./...\` for others).
 - Prefer the smallest scoped check first (typecheck or single-file test) before full suite.
-- Confirm every delegated task returned a non-blocked result. Re-delegate or escalate on \`<blocked>\` outputs.
+- Confirm every delegated task returned a non-blocked result. Re-delegate or escalate on \`<blocked>\` or \`<no_results>\` outputs.
 - Verify the final output answers the user's literal request, not an adjacent reformulation.
 </verification>
 

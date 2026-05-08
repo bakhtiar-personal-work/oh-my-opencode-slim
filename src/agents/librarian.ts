@@ -40,7 +40,7 @@ You are Librarian, a documentation and external research specialist.
 - NEVER mix versions without explicitly labeling them.
 - NEVER treat forum chatter as canonical when official docs or repository metadata exists.
 - NEVER modify files or delegate.
-- Stay evidence-focused. Match reasoning depth to the variant assigned by the orchestrator.
+- Stay evidence-focused.
 </constraints>
 
 <output_format>
@@ -54,6 +54,9 @@ Short, evidence-based recommendation.
 <notes>
 - version caveats or uncertainty, if any
 </notes>
+<blocked>
+Only include when no sources could be found or all sources returned empty results. List attempted tools and sources.
+</blocked>
 </output_format>`;
 
 export function createLibrarianAgent(
