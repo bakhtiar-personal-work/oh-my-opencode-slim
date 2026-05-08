@@ -71,15 +71,17 @@ describe('providers', () => {
     expect((config.presets as any).openai).toBeDefined();
     const agents = (config.presets as any)['opencode-go'];
     expect(agents).toBeDefined();
-    expect(agents.orchestrator.model).toBe('opencode-go/deepseek-v4-flash');
-    expect(agents.orchestrator.variant).toBe('high');
-    expect(agents.oracle.model).toBe('opencode-go/deepseek-v4-pro');
-    expect(agents.oracle.variant).toBe('max');
-    expect(agents.council.model).toBe('opencode-go/deepseek-v4-pro');
+    expect(agents.orchestrator.model).toBe('opencode-go/deepseek-v4-pro');
+    expect(agents.orchestrator.variant).toBe('medium');
+    expect(agents.oracle.model).toBe('opencode-go/deepseek-v4-flash');
+    expect(agents.oracle.variant).toBe('medium');
+    expect(agents.council.model).toBe('opencode-go/glm-5.1');
     expect(agents.council.variant).toBe('high');
-    expect(agents.librarian.model).toBe('opencode-go/minimax-m2.7');
-    expect(agents.explorer.model).toBe('opencode-go/minimax-m2.7');
-    expect(agents.designer.model).toBe('opencode-go/kimi-k2.6');
+    expect(agents.librarian.model).toBe('opencode-go/qwen-3.6-plus');
+    expect(agents.librarian.variant).toBe('low');
+    expect(agents.explorer.model).toBe('opencode-go/qwen-3.6-plus');
+    expect(agents.explorer.variant).toBe('low');
+    expect(agents.designer.model).toBe('opencode-go/mimo-v2.5-pro');
     expect(agents.fixer.model).toBe('opencode-go/deepseek-v4-flash');
     expect(agents.fixer.variant).toBe('low');
   });
@@ -151,14 +153,18 @@ describe('providers', () => {
     // Orchestrator should implicitly cover bundled codemap via '*'
     expect(agents.orchestrator.skills).toContain('*');
 
-    // Designer should have 'agent-browser'
+    // Designer should have 'agent-browser' and 'web-design-guidelines'
     expect(agents.designer.skills).toContain('agent-browser');
+    expect(agents.designer.skills).toContain('web-design-guidelines');
 
-    // Explorer should have no bundled skills by default
-    expect(agents.explorer.skills).toEqual([]);
+    // Librarian should have 'find-skills'
+    expect(agents.librarian.skills).toContain('find-skills');
 
-    // Fixer should have no bundled skills by default
+    // Fixer should not receive git automation-related skills by default
     expect(agents.fixer.skills).toEqual([]);
+
+    // Explorer is not in any RECOMMENDED_SKILLS allowlist, so it stays empty
+    expect(agents.explorer.skills).toEqual([]);
   });
 
   test('generateLiteConfig includes mcps field', () => {

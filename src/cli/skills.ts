@@ -48,6 +48,20 @@ export const RECOMMENDED_SKILLS: RecommendedSkill[] = [
       'agent-browser install',
     ],
   },
+  {
+    name: 'web-design-guidelines',
+    repo: 'https://github.com/vercel-labs/skills',
+    skillName: 'web-design-guidelines',
+    allowedAgents: ['designer'],
+    description: 'Modern web design and accessibility guidelines',
+  },
+  {
+    name: 'find-skills',
+    repo: 'https://github.com/vercel-labs/skills',
+    skillName: 'find-skills',
+    allowedAgents: ['orchestrator', 'librarian'],
+    description: 'Skill discovery and selection helper',
+  },
 ];
 
 /**

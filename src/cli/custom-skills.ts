@@ -37,7 +37,7 @@ export const CUSTOM_SKILLS: CustomSkill[] = [
   {
     name: 'codemap',
     description: 'Repository understanding and hierarchical codemap generation',
-    allowedAgents: ['orchestrator'],
+    allowedAgents: ['orchestrator', 'explorer', 'fixer'],
     sourcePath: 'src/skills/codemap',
   },
 ];

@@ -5,7 +5,8 @@ import * as path from 'node:path';
 
 const LOG_PREFIX = 'oh-my-opencode-slim.';
 const LOG_SUFFIX = '.log';
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const MAX_LOG_FILES = 10;
+const MAX_BG_TASK_FILES = 10;
 
 let logFile: string | null = null;
 let writeChain: Promise<void> = Promise.resolve();
@@ -17,44 +18,65 @@ function getLogDir(): string {
   );
 }
 
-function cleanupOldLogs(logDir: string): void {
+function trimByCount(
+  filePaths: string[],
+  maxFiles: number,
+  preservePath?: string,
+): void {
+  if (filePaths.length <= maxFiles) return;
+
+  const sortedByMtime = filePaths
+    .map((filePath) => {
+      try {
+        return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry): entry is { filePath: string; mtimeMs: number } =>
+      Boolean(entry),
+    )
+    .sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+  const overflow = sortedByMtime.length - maxFiles;
+  if (overflow <= 0) return;
+
+  const candidates = preservePath
+    ? sortedByMtime.filter((entry) => entry.filePath !== preservePath)
+    : sortedByMtime;
+
+  for (const entry of candidates.slice(0, overflow)) {
+    try {
+      fs.unlinkSync(entry.filePath);
+    } catch {
+      // Skip individual file errors
+    }
+  }
+}
+
+function cleanupOldLogs(logDir: string, preservePath?: string): void {
   try {
     const entries = fs.readdirSync(logDir);
-    const now = Date.now();
-    for (const entry of entries) {
-      if (entry.startsWith(LOG_PREFIX) && entry.endsWith(LOG_SUFFIX)) {
-        const filePath = path.join(logDir, entry);
-        try {
-          const stat = fs.statSync(filePath);
-          if (now - stat.mtimeMs > RETENTION_MS) {
-            fs.unlinkSync(filePath);
-          }
-        } catch {
-          // Skip individual file errors
-        }
-      }
-    }
+    const logFiles = entries
+      .filter(
+        (entry) => entry.startsWith(LOG_PREFIX) && entry.endsWith(LOG_SUFFIX),
+      )
+      .map((entry) => path.join(logDir, entry));
+
+    trimByCount(logFiles, MAX_LOG_FILES, preservePath);
   } catch {
     // Directory may not exist yet — that's fine
   }
 
-  // Apply the same 7-day retention to persisted background task files
+  // Apply the same count-based retention to persisted background task files
   try {
     const bgTaskDir = path.join(logDir, 'bg-tasks');
-    const taskFiles = fs.readdirSync(bgTaskDir);
-    const now = Date.now();
-    for (const entry of taskFiles) {
-      if (!entry.endsWith('.json')) continue;
-      const filePath = path.join(bgTaskDir, entry);
-      try {
-        const stat = fs.statSync(filePath);
-        if (now - stat.mtimeMs > RETENTION_MS) {
-          fs.unlinkSync(filePath);
-        }
-      } catch {
-        // Skip individual file errors
-      }
-    }
+    const taskFiles = fs
+      .readdirSync(bgTaskDir)
+      .filter((entry) => entry.endsWith('.json'))
+      .map((entry) => path.join(bgTaskDir, entry));
+
+    trimByCount(taskFiles, MAX_BG_TASK_FILES);
   } catch {
     // bg-tasks dir may not exist yet — that's fine
   }
@@ -73,7 +95,7 @@ export function initLogger(sessionId: string): void {
   } catch {
     // File creation failed — later writes will silently fail
   }
-  cleanupOldLogs(dir);
+  cleanupOldLogs(dir, logFile);
 }
 
 /** @internal Reset logger state for testing */

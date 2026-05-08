@@ -111,51 +111,54 @@ describe('logger', () => {
     expect(content2).toContain('from session2');
   });
 
-  test('cleanup deletes files older than 7 days', () => {
-    const oldFileName = 'oh-my-opencode-slim.20260301T000000.log';
-    const oldPath = path.join(tmpDir, oldFileName);
-    fs.writeFileSync(oldPath, 'old log\n');
-
-    const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
-    fs.utimesSync(oldPath, new Date(eightDaysAgo), new Date(eightDaysAgo));
-
-    initLogger('current');
-    log('init');
-
-    const files = fs.readdirSync(tmpDir);
-    expect(files).not.toContain(oldFileName);
-    expect(files.find((f) => f.includes('current'))).toBeDefined();
-  });
-
-  test('cleanup preserves recent files', () => {
-    const recentFileName = 'oh-my-opencode-slim.20260415T000000.log';
-    const recentPath = path.join(tmpDir, recentFileName);
-    fs.writeFileSync(recentPath, 'recent log\n');
-
-    initLogger('current');
-
-    const files = fs.readdirSync(tmpDir);
-    expect(files).toContain(recentFileName);
-  });
-
-  test('cleanup with mixed-age files deletes only old ones', () => {
-    const oldFileName = 'oh-my-opencode-slim.old.log';
-    const oldPath = path.join(tmpDir, oldFileName);
-    fs.writeFileSync(oldPath, 'old log\n');
-    const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
-    fs.utimesSync(oldPath, new Date(eightDaysAgo), new Date(eightDaysAgo));
-
-    const recentFileName = 'oh-my-opencode-slim.recent.log';
-    const recentPath = path.join(tmpDir, recentFileName);
-    fs.writeFileSync(recentPath, 'recent log\n');
+  test('cleanup keeps only the latest 10 log files', () => {
+    const baseTime = Date.now() - 50_000;
+    for (let i = 0; i < 10; i++) {
+      const fileName = `oh-my-opencode-slim.seed-${i}.log`;
+      const filePath = path.join(tmpDir, fileName);
+      fs.writeFileSync(filePath, `seed-${i}\n`);
+      const mtime = baseTime + i * 1_000;
+      fs.utimesSync(filePath, new Date(mtime), new Date(mtime));
+    }
 
     initLogger('current');
     log('init');
 
-    const files = fs.readdirSync(tmpDir);
-    expect(files).not.toContain(oldFileName);
-    expect(files).toContain(recentFileName);
-    expect(files.find((f) => f.includes('current'))).toBeDefined();
+    const files = fs
+      .readdirSync(tmpDir)
+      .filter(
+        (file) =>
+          file.startsWith('oh-my-opencode-slim.') && file.endsWith('.log'),
+      )
+      .sort();
+
+    expect(files.length).toBe(10);
+    expect(files).toContain('oh-my-opencode-slim.current.log');
+    expect(files).not.toContain('oh-my-opencode-slim.seed-0.log');
+    expect(files).toContain('oh-my-opencode-slim.seed-9.log');
+  });
+
+  test('cleanup does not delete current session log when overflowing', () => {
+    const baseTime = Date.now() - 100_000;
+    for (let i = 0; i < 25; i++) {
+      const fileName = `oh-my-opencode-slim.old-${i}.log`;
+      const filePath = path.join(tmpDir, fileName);
+      fs.writeFileSync(filePath, `old-${i}\n`);
+      const mtime = baseTime + i * 1_000;
+      fs.utimesSync(filePath, new Date(mtime), new Date(mtime));
+    }
+
+    initLogger('current');
+
+    const files = fs
+      .readdirSync(tmpDir)
+      .filter(
+        (file) =>
+          file.startsWith('oh-my-opencode-slim.') && file.endsWith('.log'),
+      );
+
+    expect(files.length).toBe(10);
+    expect(files).toContain('oh-my-opencode-slim.current.log');
   });
 
   test('cleanup with no existing files does not crash', () => {

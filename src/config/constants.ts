@@ -54,14 +54,14 @@ export const SUBAGENT_DELEGATION_RULES: Record<AgentName, readonly string[]> = {
 
 // Default models for each agent
 // orchestrator prioritizes classification/routing over deep analysis;
-// a fast+smart model at high variant is sufficient (real analysis
-// is delegated to @oracle which has its own variant/model control).
+// V4 Pro at medium variant improves instruction-following while
+// preserving quota headroom. Real analysis remains delegated to @oracle.
 export const DEFAULT_MODELS: Record<AgentName, string | undefined> = {
-  orchestrator: 'opencode-go/deepseek-v4-flash',
+  orchestrator: 'opencode-go/deepseek-v4-pro',
   oracle: 'opencode-go/deepseek-v4-flash',
-  librarian: 'opencode-go/minimax-m2.7',
-  explorer: 'opencode-go/minimax-m2.7',
-  designer: 'opencode-go/mimo-v2-pro',
+  librarian: 'opencode-go/qwen-3.6-plus',
+  explorer: 'opencode-go/qwen-3.6-plus',
+  designer: 'opencode-go/mimo-v2.5-pro',
   fixer: 'opencode-go/deepseek-v4-flash',
 };
 

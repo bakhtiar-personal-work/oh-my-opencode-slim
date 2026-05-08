@@ -46,12 +46,12 @@ export const MODEL_MAPPINGS = {
     fixer: { model: 'zai-coding-plan/glm-5', variant: 'low' },
   },
   'opencode-go': {
-    orchestrator: { model: 'opencode-go/deepseek-v4-flash', variant: 'high' },
-    oracle: { model: 'opencode-go/deepseek-v4-pro', variant: 'max' },
-    council: { model: 'opencode-go/deepseek-v4-pro', variant: 'high' },
-    librarian: { model: 'opencode-go/minimax-m2.7' },
-    explorer: { model: 'opencode-go/minimax-m2.7' },
-    designer: { model: 'opencode-go/kimi-k2.6', variant: 'medium' },
+    orchestrator: { model: 'opencode-go/deepseek-v4-pro', variant: 'medium' },
+    oracle: { model: 'opencode-go/deepseek-v4-flash', variant: 'medium' },
+    council: { model: 'opencode-go/glm-5.1', variant: 'high' },
+    librarian: { model: 'opencode-go/qwen-3.6-plus', variant: 'low' },
+    explorer: { model: 'opencode-go/qwen-3.6-plus', variant: 'low' },
+    designer: { model: 'opencode-go/mimo-v2.5-pro', variant: 'medium' },
     fixer: { model: 'opencode-go/deepseek-v4-flash', variant: 'low' },
   },
 } as const;

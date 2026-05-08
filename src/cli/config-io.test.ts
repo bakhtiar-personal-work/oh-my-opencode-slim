@@ -432,7 +432,7 @@ describe('config-io', () => {
     expect(saved.preset).toBe('opencode-go');
     expect(saved.presets.openai).toBeDefined();
     expect(saved.presets['opencode-go'].orchestrator.model).toBe(
-      'opencode-go/deepseek-v4-flash',
+      'opencode-go/deepseek-v4-pro',
     );
   });
 

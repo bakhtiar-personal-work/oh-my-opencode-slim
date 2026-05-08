@@ -89,8 +89,8 @@ describe('agent alias backward compatibility', () => {
   });
 });
 
-describe('fixer agent fallback', () => {
-  test('fixer inherits librarian model when no fixer config provided', () => {
+describe('fixer agent model selection', () => {
+  test('fixer does not inherit librarian model when no fixer config provided', () => {
     const config: PluginConfig = {
       agents: {
         librarian: { model: 'librarian-custom-model' },
@@ -98,8 +98,7 @@ describe('fixer agent fallback', () => {
     };
     const agents = createAgents(config);
     const fixer = agents.find((a) => a.name === 'fixer');
-    const librarian = agents.find((a) => a.name === 'librarian');
-    expect(fixer?.config.model).toBe(librarian?.config.model);
+    expect(fixer?.config.model).not.toBe('librarian-custom-model');
   });
 
   test('fixer uses its own model when explicitly configured', () => {

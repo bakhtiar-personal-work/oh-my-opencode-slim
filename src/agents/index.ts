@@ -215,24 +215,6 @@ const SUBAGENT_FACTORIES: Record<SubagentName, AgentFactory> = {
 export function createAgents(config?: PluginConfig): AgentDefinition[] {
   const disabled = getDisabledAgents(config);
 
-  // TEMP: If fixer has no config, inherit from librarian's model to avoid breaking
-  // existing users who don't have fixer in their config yet
-  const getModelForAgent = (name: SubagentName): string => {
-    if (name === 'fixer' && !getAgentOverride(config, 'fixer')?.model) {
-      const librarianOverride = getAgentOverride(config, 'librarian')?.model;
-      let librarianModel: string | undefined;
-      if (Array.isArray(librarianOverride)) {
-        const first = librarianOverride[0];
-        librarianModel = typeof first === 'string' ? first : first?.id;
-      } else {
-        librarianModel = librarianOverride;
-      }
-      return librarianModel ?? (DEFAULT_MODELS.librarian as string);
-    }
-    // Subagents always have a defined default model; cast is safe here
-    return DEFAULT_MODELS[name] as string;
-  };
-
   // 1. Gather all sub-agent definitions with custom prompts
   const protoSubAgents = (
     Object.entries(SUBAGENT_FACTORIES) as [SubagentName, AgentFactory][]
@@ -241,7 +223,7 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     .map(([name, factory]) => {
       const customPrompts = loadAgentPrompt(name, config?.preset);
       return factory(
-        getModelForAgent(name),
+        DEFAULT_MODELS[name] as string,
         customPrompts.prompt,
         customPrompts.appendPrompt,
       );
@@ -316,10 +298,10 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     orchestratorPrompts.appendPrompt,
     disabled,
   );
-  applyDefaultPermissions(orchestrator, orchestratorOverride?.skills);
   if (orchestratorOverride) {
     applyOverrides(orchestrator, orchestratorOverride);
   }
+  applyDefaultPermissions(orchestrator, orchestratorOverride?.skills);
 
   // 3a. Inject oracle model names from config into orchestrator prompt
   // (avoids hardcoding model IDs in the prompt text)
@@ -333,6 +315,10 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
     | undefined;
   const oracleSmartModel =
     typeof oracleOptions?.smart === 'string' ? oracleOptions.smart : '';
+  const oracleSmartModelOrFallback =
+    oracleSmartModel.length > 0
+      ? oracleSmartModel
+      : (oracleDefaultModel ?? '');
 
   if (
     typeof orchestrator.config.prompt === 'string' &&
@@ -340,7 +326,10 @@ export function createAgents(config?: PluginConfig): AgentDefinition[] {
   ) {
     orchestrator.config.prompt = orchestrator.config.prompt
       .replace(/\{\{ORACLE_DEFAULT_MODEL\}\}/g, oracleDefaultModel ?? '')
-      .replace(/\{\{ORACLE_SMART_MODEL\}\}/g, oracleSmartModel);
+      .replace(
+        /\{\{ORACLE_SMART_MODEL_OR_FALLBACK\}\}/g,
+        oracleSmartModelOrFallback,
+      );
   }
 
   // Collect all display names from orchestrator and all subagents
