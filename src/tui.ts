@@ -4,6 +4,7 @@ import { createElement, insert, setProp } from '@opentui/solid';
 import { createSignal } from 'solid-js';
 import { AGENT_SIDEBAR_DESCRIPTIONS } from './agents/descriptions';
 import { SUBAGENT_NAMES } from './config/constants';
+import type { OpenCodeGoUsageEntry } from './tui-state';
 import {
   readTuiSnapshot,
   readTuiSnapshotAsync,
@@ -73,6 +74,108 @@ export function getSidebarAgentNames(snapshot: TuiSnapshot): string[] {
   return configuredAgents.length > 0
     ? configuredAgents
     : FALLBACK_SIDEBAR_AGENTS;
+}
+
+function formatUsageTime(iso: string): string {
+  const diff = new Date(iso).getTime() - Date.now();
+  if (diff <= 0) return 'now';
+  const totalMin = Math.ceil(diff / 60000);
+  const hours = Math.floor(totalMin / 60);
+  const minutes = totalMin % 60;
+  if (hours > 24) {
+    const days = Math.floor(hours / 24);
+    return `${days}d ${hours % 24}h`;
+  }
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+const BAR_WIDTH = 18;
+
+function renderUsageBar(percent: number): string {
+  const filled = Math.round((percent / 100) * BAR_WIDTH);
+  const empty = BAR_WIDTH - filled;
+  return '█'.repeat(filled) + '░'.repeat(empty);
+}
+
+function renderUsagePanel(
+  snapshot: TuiSnapshot,
+  theme: {
+    text: unknown;
+    textMuted: unknown;
+    accent: unknown;
+    borderActive: unknown;
+  },
+): Child[] {
+  const usage = snapshot.opencodeGoUsage ?? {};
+  const accountNames = Object.keys(usage);
+  if (accountNames.length === 0) return [];
+
+  const rows: Child[] = [];
+  let isFirstAccount = true;
+
+  for (const name of accountNames) {
+    const entry = usage[name];
+    if (!entry) continue;
+
+    if (!isFirstAccount) {
+      rows.push(box({ width: '100%', height: 1 }));
+    }
+    isFirstAccount = false;
+
+    if (entry.error) {
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.text }, [truncate(name, 24)]),
+          text({ fg: theme.textMuted }, [' ⚠']),
+        ]),
+      );
+      continue;
+    }
+
+    rows.push(
+      box({ width: '100%', flexDirection: 'row' }, [
+        text({ fg: theme.text }, [truncate(name, 28)]),
+      ]),
+    );
+
+    const windows: Array<{
+      label: string;
+      w: OpenCodeGoUsageEntry['rolling'];
+    }> = [];
+
+    if (entry.rolling) windows.push({ label: 'R', w: entry.rolling });
+    if (entry.weekly) windows.push({ label: 'W', w: entry.weekly });
+    if (entry.monthly) windows.push({ label: 'M', w: entry.monthly });
+
+    for (let i = 0; i < windows.length; i++) {
+      const { label, w } = windows[i];
+      if (!w) continue;
+      const bar = renderUsageBar(w.percentRemaining);
+      const pct = w.percentRemaining.toFixed(0).padStart(3);
+      const timeLeft = formatUsageTime(w.resetTimeIso);
+
+      rows.push(
+        box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+          },
+          [
+            box({ flexDirection: 'row' }, [
+              text({ fg: theme.accent }, [`${label} `]),
+              text({ fg: theme.text }, [bar]),
+              text({ fg: theme.textMuted }, [` ${pct}%`]),
+            ]),
+            text({ fg: theme.textMuted }, [timeLeft]),
+          ],
+        ),
+      );
+    }
+  }
+
+  return rows;
 }
 
 const FLASH_DURATION_MS = 2000;
@@ -510,6 +613,9 @@ function renderSidebar(
 
   const orchestratingRows = buildOrchestratingRows(snapshot, now, theme);
 
+  // Build usage panel rows
+  const usageRows = renderUsagePanel(snapshot, theme);
+
   return box(
     {
       width: '100%',
@@ -563,6 +669,34 @@ function renderSidebar(
                 ],
               ),
               ...(orchestratingRows.slice(1) as Child[]),
+            ],
+          ),
+        ]
+        : []),
+      ...(usageRows.length > 0
+        ? [
+          box({ width: '100%', height: 1 }),
+          box(
+            {
+              width: '100%',
+              flexDirection: 'column',
+              border: BORDER,
+              borderColor: theme.borderActive,
+              paddingTop: 0,
+              paddingBottom: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+            },
+            [
+              box(
+                {
+                  width: '100%',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                },
+                [text({ fg: theme.text }, ['API Usage'])],
+              ),
+              ...(usageRows as Child[]),
             ],
           ),
         ]

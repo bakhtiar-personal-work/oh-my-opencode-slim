@@ -36,6 +36,8 @@ import {
   MultiplexerSessionManager,
   startAvailabilityCheck,
 } from './multiplexer';
+import type { UsageService } from './opencode-go';
+import { createUsageService } from './opencode-go';
 import {
   ast_grep_replace,
   ast_grep_search,
@@ -150,6 +152,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let taskSessionManagerHook: ReturnType<typeof createTaskSessionManagerHook>;
   let interviewManager: ReturnType<typeof createInterviewManager>;
   let presetManager: ReturnType<typeof createPresetManager>;
+  let usageService: UsageService | null;
   let webfetch: ReturnType<typeof createWebfetchTool>;
   let delegateTools: Record<string, unknown>;
   let rewriteDisplayNameMentions: ReturnType<
@@ -399,6 +402,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     });
     interviewManager = createInterviewManager(ctx, config);
     presetManager = createPresetManager(ctx, config);
+    usageService = createUsageService();
 
     toolCount =
       Object.keys(delegateTools).length +
@@ -828,6 +832,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       interviewManager.registerCommand(opencodeConfig);
       presetManager.registerCommand(opencodeConfig);
+      usageService?.registerCommand(opencodeConfig);
     },
 
     event: async (input) => {
@@ -950,6 +955,8 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
               agent: 'orchestrator',
               status: 'idle',
             });
+            // Trigger OpenCode Go usage data refresh
+            usageService?.onOrchestratorIdle();
             // Set finishedAt with a 3-second buffer so the orchestrator's
             // flash timer starts AFTER children have cleared from the tree.
             // Children were just marked idle (recordSessionDone) and need
@@ -1056,6 +1063,15 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       );
 
       await presetManager.handleCommandExecuteBefore(
+        input as {
+          command: string;
+          sessionID: string;
+          arguments: string;
+        },
+        output as { parts: Array<{ type: string; text?: string }> },
+      );
+
+      await usageService?.handleCommandExecuteBefore(
         input as {
           command: string;
           sessionID: string;

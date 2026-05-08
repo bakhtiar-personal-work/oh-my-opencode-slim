@@ -261,8 +261,11 @@ Large codebase with standard patterns → Flash at higher variant works.
 Small codebase with novel architecture → Pro may still be justified.
 Judge task characteristics (novelty, stakes, scope, subtlety), not file count.
 
+**Important:** When delegating to @oracle (or any agent where model choice matters), pass the selected model via the \`model\` parameter: \`delegate_subagent(agent: "oracle", prompt: "...", model: "opencode-go/deepseek-v4-pro", variant: "high", mode: "blocking")\`. Do not leave it out — the model you choose is only applied when you explicitly pass it.
+
 \`mode: "blocking"\` (default) — waits for subagent to finish, returns result.
 \`mode: "fire_forget"\` — returns session_id immediately. Collect with \`delegate_collect\`.
+\`model: "model-id"\` (required for @oracle) — specify which model the subagent should use. Choose based on the @oracle model selection rules above. Example: \`model: "opencode-go/deepseek-v4-pro"\`.
 
 Parallel: call \`delegate_subagent\` multiple times in one turn for independent tasks.
 Only parallelize truly independent branches; reconcile dependent steps after results.

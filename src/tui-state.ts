@@ -1,6 +1,9 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { OpenCodeGoUsageEntry } from './opencode-go/types';
+
+export type { OpenCodeGoUsageEntry };
 
 export interface AgentDetail {
   description: string;
@@ -38,6 +41,7 @@ export interface TuiSnapshot {
   sessionFinished: Record<string, SessionFinish>;
   sessionTree: Record<string, SessionNode>;
   sessionStatuses: Record<string, string>;
+  opencodeGoUsage: Record<string, OpenCodeGoUsageEntry>;
 }
 
 /** In-memory session tree store — shared between main plugin and TUI.
@@ -73,6 +77,7 @@ function emptySnapshot(): TuiSnapshot {
     sessionFinished: {},
     sessionTree: {},
     sessionStatuses: {},
+    opencodeGoUsage: {},
   };
 }
 
@@ -97,6 +102,7 @@ function parseSnapshot(value: string): TuiSnapshot {
     sessionFinished: parsed.sessionFinished ?? {},
     sessionTree: parsed.sessionTree ?? {},
     sessionStatuses: parsed.sessionStatuses ?? {},
+    opencodeGoUsage: parsed.opencodeGoUsage ?? {},
   };
 }
 
@@ -272,6 +278,16 @@ export function recordSessionDone(sessionID: string): void {
     if (storeNode) {
       storeNode.status = 'idle';
       storeNode.finishedAt = Date.now();
+    }
+  });
+}
+
+export function recordOpencodeGoUsage(usage: OpenCodeGoUsageEntry[]): void {
+  updateSnapshot((snapshot) => {
+    for (const entry of usage) {
+      if (entry.accountName) {
+        snapshot.opencodeGoUsage[entry.accountName] = entry;
+      }
     }
   });
 }

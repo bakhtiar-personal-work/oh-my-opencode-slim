@@ -194,7 +194,9 @@ export function createDelegateTools(
       model: tool.schema
         .string()
         .optional()
-        .describe('Override the subagent model (rare)'),
+        .describe(
+          'Override the subagent model. Pass for @oracle when you selected a specific model (flash vs pro).',
+        ),
     },
     execute: async (args, context) => {
       const parentSessionId = context.sessionID;
