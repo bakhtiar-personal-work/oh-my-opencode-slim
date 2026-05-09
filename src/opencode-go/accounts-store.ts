@@ -14,11 +14,14 @@ export interface StoredAccount {
   name: string;
   workspaceId: string;
   authCookie: string;
+  provider?: string;
+  apiKey?: string;
 }
 
 interface AccountsFile {
   version: 1;
   accounts: StoredAccount[];
+  activeAccount: string | null;
 }
 
 const STATE_DIR = 'oh-my-opencode-slim';
@@ -35,14 +38,21 @@ function getAccountsPath(): string {
 }
 
 function emptyFile(): AccountsFile {
-  return { version: 1, accounts: [] };
+  return { version: 1, accounts: [], activeAccount: null };
 }
 
 function parseAccountsFile(value: string): AccountsFile {
   try {
     const parsed = JSON.parse(value) as Partial<AccountsFile>;
     if (parsed?.version === 1 && Array.isArray(parsed.accounts)) {
-      return parsed as AccountsFile;
+      return {
+        version: 1,
+        accounts: parsed.accounts,
+        activeAccount:
+          typeof parsed.activeAccount === 'string'
+            ? parsed.activeAccount
+            : null,
+      };
     }
   } catch {
     // Fall through to empty
@@ -123,4 +133,46 @@ export function maskCookie(cookie: string): string {
     return `${cookie.slice(0, 4)}...${cookie.slice(-4)}`;
   }
   return `${cookie.slice(0, 8)}...${cookie.slice(-4)}`;
+}
+
+/**
+ * Look up a stored account by name.
+ */
+export function getAccount(name: string): StoredAccount | undefined {
+  const file = readAccountsFile();
+  return file.accounts.find((a) => a.name === name);
+}
+
+/**
+ * Set the provider and API key for an existing account.
+ * Returns true if updated, false if account not found.
+ */
+export function setAccountKey(
+  name: string,
+  provider: string,
+  apiKey: string,
+): boolean {
+  const file = readAccountsFile();
+  const account = file.accounts.find((a) => a.name === name);
+  if (!account) return false;
+  account.provider = provider;
+  account.apiKey = apiKey;
+  writeAccountsFile(file);
+  return true;
+}
+
+/**
+ * Get the currently active OpenCode Go account name.
+ */
+export function getActiveAccount(): string | null {
+  return readAccountsFile().activeAccount ?? null;
+}
+
+/**
+ * Set the active OpenCode Go account. Pass null to clear.
+ */
+export function setActiveAccount(name: string | null): void {
+  const file = readAccountsFile();
+  file.activeAccount = name;
+  writeAccountsFile(file);
 }

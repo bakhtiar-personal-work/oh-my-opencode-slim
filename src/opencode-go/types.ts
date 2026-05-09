@@ -54,6 +54,10 @@ export interface OpenCodeGoAccount {
   workspaceId: string;
   /** Auth cookie for dashboard access. */
   authCookie: string;
+  /** Provider ID (e.g. "openai", "anthropic") for API key switching. */
+  provider?: string;
+  /** Provider API key for this workspace. Stored locally, not in plugin config. */
+  apiKey?: string;
 }
 
 /** Config for the OpenCode Go tracking feature. */

@@ -8,10 +8,14 @@
 
 export type { StoredAccount } from './accounts-store';
 export {
+  getAccount,
+  getActiveAccount,
   loadAccounts,
   maskCookie,
   removeAccount,
   saveAccount,
+  setAccountKey,
+  setActiveAccount,
   updateAccountCookie,
 } from './accounts-store';
 export { scrapeQuota, scrapeUsagePage } from './scraper';

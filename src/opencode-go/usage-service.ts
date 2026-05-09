@@ -8,17 +8,26 @@
  * out of version control and the published schema.
  */
 
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { PluginInput } from '@opencode-ai/plugin';
 import {
+  recordActiveOpenCodeGoAccount,
   recordOpencodeGoUsage,
   removeOpencodeGoUsageEntry,
 } from '../tui-state';
 import { createInternalAgentTextPart } from '../utils';
 import {
+  getAccount,
+  getActiveAccount,
   loadAccounts,
   maskCookie,
   removeAccount,
   type StoredAccount,
   saveAccount,
+  setAccountKey,
+  setActiveAccount,
   updateAccountCookie,
 } from './accounts-store';
 import { scrapeQuota } from './scraper';
@@ -48,6 +57,7 @@ function formatBar(percent: number, width = 10): string {
 }
 
 export class UsageService {
+  private client: PluginInput['client'];
   private lastRefresh = 0;
   private pendingRefresh: Promise<OpenCodeGoUsageEntry[]> | null = null;
   private cached: OpenCodeGoUsageEntry[] = [];
@@ -56,9 +66,11 @@ export class UsageService {
   private periodicIntervalMs: number;
 
   constructor(
+    client: PluginInput['client'],
     refreshIntervalMs = DEFAULT_REFRESH_INTERVAL_MS,
     periodicIntervalMs = DEFAULT_PERIODIC_INTERVAL_MS,
   ) {
+    this.client = client;
     this.refreshIntervalMs = refreshIntervalMs;
     this.periodicIntervalMs = periodicIntervalMs;
     this.startPeriodicRefresh();
@@ -146,10 +158,60 @@ export class UsageService {
    * Called when orchestrator goes idle — triggers a non-forced refresh.
    */
   onOrchestratorIdle(): void {
+    // Sync active account from auth.json (handles external edits)
+    this.syncActiveAccount();
     // Fire-and-forget refresh (rate-limited internally)
     this.refresh(false).catch(() => {
       // Best-effort: errors are captured in the entries
     });
+  }
+
+  /**
+   * Sync the active account by comparing stored API keys against
+   * auth.json. If a stored account's apiKey matches the opencode-go
+   * key in auth.json, that account is marked active. Otherwise active
+   * is cleared. This keeps the sidebar accurate even if auth.json
+   * was edited externally.
+   */
+  syncActiveAccount(): string | null {
+    const authPath = path.join(
+      process.env.XDG_DATA_HOME ?? path.join(os.homedir(), '.local', 'share'),
+      'opencode',
+      'auth.json',
+    );
+
+    let authKey: string | undefined;
+    try {
+      const raw = fs.readFileSync(authPath, 'utf8');
+      const auth = JSON.parse(raw) as Record<
+        string,
+        { type: string; key?: string }
+      >;
+      authKey = auth['opencode-go']?.key;
+    } catch {
+      // auth.json doesn't exist or can't be read — clear active
+    }
+
+    if (authKey) {
+      const accounts = this.getAccounts();
+      for (const account of accounts) {
+        if (account.apiKey === authKey) {
+          // Found matching account — ensure it's marked active
+          if (getActiveAccount() !== account.name) {
+            setActiveAccount(account.name);
+            recordActiveOpenCodeGoAccount(account.name);
+          }
+          return account.name;
+        }
+      }
+    }
+
+    // No match found — clear active if it was set
+    if (getActiveAccount() !== null) {
+      setActiveAccount(null);
+      recordActiveOpenCodeGoAccount(null);
+    }
+    return null;
   }
 
   /**
@@ -252,9 +314,20 @@ export class UsageService {
         }
         const removed = removeAccount(name);
         if (removed) {
-          output.parts.push(
-            createInternalAgentTextPart(`✅ Removed account "${name}".`),
-          );
+          // If removing the active account, clear the active state
+          if (getActiveAccount() === name) {
+            setActiveAccount(null);
+            recordActiveOpenCodeGoAccount(null);
+            output.parts.push(
+              createInternalAgentTextPart(
+                `✅ Removed account "${name}" (was active). Run /go switch to activate another account.`,
+              ),
+            );
+          } else {
+            output.parts.push(
+              createInternalAgentTextPart(`✅ Removed account "${name}".`),
+            );
+          }
           // Clear sidebar entry immediately
           removeOpencodeGoUsageEntry(name);
         } else {
@@ -295,6 +368,7 @@ export class UsageService {
       case 'list':
       case 'ls': {
         const accounts = this.getAccounts();
+        const active = getActiveAccount();
         if (accounts.length === 0) {
           output.parts.push(
             createInternalAgentTextPart(
@@ -305,16 +379,121 @@ export class UsageService {
         }
         const lines = ['### OpenCode Go Accounts', ''];
         for (const acct of accounts) {
-          lines.push(`  ${acct.name}: ${acct.workspaceId}`);
+          const isActive = active === acct.name;
+          const star = isActive ? '★ ' : '  ';
+          lines.push(`${star}${acct.name}: ${acct.workspaceId}`);
           lines.push(`    cookie: ${maskCookie(acct.authCookie)}`);
+          if (acct.provider) {
+            lines.push(
+              `    provider: ${acct.provider}${acct.apiKey ? ' (key set)' : ''}`,
+            );
+          }
+        }
+        if (active) {
+          lines.push('');
+          lines.push(`Active account: ★ ${active}`);
         }
         lines.push('');
         lines.push('Commands:');
         lines.push('  /go add <name> <workspace-id> <auth-cookie>');
         lines.push('  /go remove <name>');
         lines.push('  /go edit <name> <new-auth-cookie>');
+        lines.push('  /go set-key <name> <api-key>');
+        lines.push('  /go switch <name>');
         lines.push('  /go refresh');
         output.parts.push(createInternalAgentTextPart(lines.join('\n')));
+        break;
+      }
+
+      case 'set-key': {
+        const [_, name, ...keyParts] = parts;
+        const apiKey = keyParts.join(' ');
+        if (!name || !apiKey) {
+          output.parts.push(
+            createInternalAgentTextPart(
+              'Usage: /go set-key <name> <api-key>\n' +
+                'Example: /go set-key personal sk-...\n' +
+                'After setting a key, use /go switch <name> to activate it.',
+            ),
+          );
+          return;
+        }
+        const updated = setAccountKey(name, 'opencode-go', apiKey);
+        if (updated) {
+          output.parts.push(
+            createInternalAgentTextPart(
+              `✅ Set API key for "${name}". Use /go switch ${name} to activate.`,
+            ),
+          );
+        } else {
+          output.parts.push(
+            createInternalAgentTextPart(`Account "${name}" not found.`),
+          );
+        }
+        break;
+      }
+
+      case 'switch': {
+        const [_, name] = parts;
+        if (!name) {
+          output.parts.push(
+            createInternalAgentTextPart('Usage: /go switch <name>'),
+          );
+          return;
+        }
+        const account = getAccount(name);
+        if (!account) {
+          output.parts.push(
+            createInternalAgentTextPart(`Account "${name}" not found.`),
+          );
+          return;
+        }
+        if (!account.apiKey) {
+          output.parts.push(
+            createInternalAgentTextPart(
+              `Account "${name}" has no API key set. Use /go set-key ${name} <api-key> first.`,
+            ),
+          );
+          return;
+        }
+        // No-op if already active
+        if (getActiveAccount() === name) {
+          output.parts.push(
+            createInternalAgentTextPart(`Account "${name}" is already active.`),
+          );
+          return;
+        }
+        try {
+          // Write the API key to OpenCode auth.json via SDK's auth.set()
+          await this.client.auth.set({
+            path: { id: 'opencode-go' },
+            body: { type: 'api', key: account.apiKey },
+          });
+        } catch {
+          output.parts.push(
+            createInternalAgentTextPart(
+              '⚠ Failed to update auth. The key was not applied.',
+            ),
+          );
+          return;
+        }
+        // Set as active
+        setActiveAccount(name);
+        recordActiveOpenCodeGoAccount(name);
+        // Show restart toast
+        this.client.tui
+          .showToast({
+            body: {
+              title: 'Account Switched',
+              message: `Switched to "${name}". Restart for new API key.`,
+              variant: 'success',
+              duration: 5000,
+            },
+          })
+          .catch(() => {});
+        output.parts.push(
+          createInternalAgentTextPart(`✅ Switched to account "${name}".`),
+        );
         break;
       }
 
@@ -334,6 +513,8 @@ export class UsageService {
               '  /go add <name> <workspace-id> <auth-cookie>   Add an account\n' +
               '  /go remove <name>                             Remove an account\n' +
               '  /go edit <name> <new-auth-cookie>            Update auth cookie\n' +
+              '  /go set-key <name> <api-key>                 Set API key for switching\n' +
+              '  /go switch <name>                            Switch active account\n' +
               '  /go list                                     List all accounts\n' +
               '  /go refresh                                  Force refresh all',
           ),
@@ -357,17 +538,18 @@ export class UsageService {
     if (!configCommand?.[GO_COMMAND]) {
       (opencodeConfig.command as Record<string, unknown>)[GO_COMMAND] = {
         template:
-          'Manage OpenCode Go accounts (add, remove, list, edit, refresh)',
+          'Manage OpenCode Go accounts (add, remove, list, edit, set-key, switch, refresh)',
         description:
-          'Add, remove, list, edit, or refresh OpenCode Go accounts for usage tracking in the sidebar',
+          'Add, remove, list, edit, set-key, switch, or refresh OpenCode Go accounts for usage tracking in the sidebar',
       };
     }
   }
 }
 
 export function createUsageService(
+  client: PluginInput['client'],
   refreshIntervalMs?: number,
   periodicIntervalMs?: number,
 ): UsageService {
-  return new UsageService(refreshIntervalMs, periodicIntervalMs);
+  return new UsageService(client, refreshIntervalMs, periodicIntervalMs);
 }

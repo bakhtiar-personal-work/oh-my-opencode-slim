@@ -98,6 +98,12 @@ function renderUsageBar(percent: number): string {
   return '█'.repeat(filled) + '░'.repeat(empty);
 }
 
+function getUsageColor(percentRemaining: number): string {
+  if (percentRemaining < 25) return '#E74C3C'; // red
+  if (percentRemaining < 50) return '#F39C12'; // amber/yellow
+  return ''; // empty = use default theme color
+}
+
 function renderUsagePanel(
   snapshot: TuiSnapshot,
   theme: {
@@ -126,16 +132,27 @@ function renderUsagePanel(
     if (entry.error) {
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.text }, [truncate(name, 24)]),
+          text({ fg: theme.text }, [
+            snapshot.activeOpenCodeGoAccount === name
+              ? `★ ${truncate(name, 22)}`
+              : truncate(name, 24),
+          ]),
           text({ fg: theme.textMuted }, [' ⚠']),
         ]),
       );
       continue;
     }
 
+    const isActive = snapshot.activeOpenCodeGoAccount === name;
+    const displayName = isActive
+      ? `★ ${truncate(name, 26)}`
+      : truncate(name, 28);
+
     rows.push(
       box({ width: '100%', flexDirection: 'row' }, [
-        text({ fg: theme.text }, [truncate(name, 28)]),
+        text(isActive ? { fg: theme.accent } : { fg: theme.text }, [
+          displayName,
+        ]),
       ]),
     );
 
@@ -151,6 +168,7 @@ function renderUsagePanel(
     for (let i = 0; i < windows.length; i++) {
       const { label, w } = windows[i];
       if (!w) continue;
+      const usageColor = getUsageColor(w.percentRemaining);
       const bar = renderUsageBar(w.percentRemaining);
       const pct = w.percentRemaining.toFixed(0).padStart(3);
       const timeLeft = formatUsageTime(w.resetTimeIso);
@@ -165,8 +183,8 @@ function renderUsagePanel(
           [
             box({ flexDirection: 'row' }, [
               text({ fg: theme.accent }, [`${label} `]),
-              text({ fg: theme.text }, [bar]),
-              text({ fg: theme.textMuted }, [` ${pct}%`]),
+              text({ fg: usageColor || theme.text }, [bar]),
+              text({ fg: usageColor || theme.textMuted }, [` ${pct}%`]),
             ]),
             text({ fg: theme.textMuted }, [timeLeft]),
           ],

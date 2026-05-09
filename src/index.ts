@@ -402,7 +402,8 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     });
     interviewManager = createInterviewManager(ctx, config);
     presetManager = createPresetManager(ctx, config);
-    usageService = createUsageService();
+    usageService = createUsageService(ctx.client);
+    usageService.syncActiveAccount();
 
     toolCount =
       Object.keys(delegateTools).length +

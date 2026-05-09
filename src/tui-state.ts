@@ -42,6 +42,8 @@ export interface TuiSnapshot {
   sessionTree: Record<string, SessionNode>;
   sessionStatuses: Record<string, string>;
   opencodeGoUsage: Record<string, OpenCodeGoUsageEntry>;
+  /** Name of the currently active OpenCode Go account (for provider key switching). */
+  activeOpenCodeGoAccount: string | null;
 }
 
 /** In-memory session tree store — shared between main plugin and TUI.
@@ -78,6 +80,7 @@ function emptySnapshot(): TuiSnapshot {
     sessionTree: {},
     sessionStatuses: {},
     opencodeGoUsage: {},
+    activeOpenCodeGoAccount: null,
   };
 }
 
@@ -103,6 +106,10 @@ function parseSnapshot(value: string): TuiSnapshot {
     sessionTree: parsed.sessionTree ?? {},
     sessionStatuses: parsed.sessionStatuses ?? {},
     opencodeGoUsage: parsed.opencodeGoUsage ?? {},
+    activeOpenCodeGoAccount:
+      typeof parsed.activeOpenCodeGoAccount === 'string'
+        ? parsed.activeOpenCodeGoAccount
+        : null,
   };
 }
 
@@ -296,5 +303,15 @@ export function recordOpencodeGoUsage(usage: OpenCodeGoUsageEntry[]): void {
 export function removeOpencodeGoUsageEntry(name: string): void {
   updateSnapshot((snapshot) => {
     delete snapshot.opencodeGoUsage[name];
+  });
+}
+
+/**
+ * Record the active OpenCode Go account name for sidebar display.
+ * Pass null to clear.
+ */
+export function recordActiveOpenCodeGoAccount(name: string | null): void {
+  updateSnapshot((snapshot) => {
+    snapshot.activeOpenCodeGoAccount = name;
   });
 }

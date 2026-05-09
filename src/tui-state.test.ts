@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   readTuiSnapshot,
+  recordActiveOpenCodeGoAccount,
   recordOpencodeGoUsage,
   recordTuiAgentModel,
   recordTuiAgentModels,
@@ -154,5 +155,25 @@ describe('opencodeGoUsage', () => {
     // Removing a name that doesn't exist should not throw
     expect(() => removeOpencodeGoUsageEntry('nonexistent')).not.toThrow();
     expect(readTuiSnapshot().opencodeGoUsage).toHaveProperty('personal');
+  });
+});
+
+describe('activeOpenCodeGoAccount', () => {
+  test('recordActiveOpenCodeGoAccount sets the field', () => {
+    recordActiveOpenCodeGoAccount('personal');
+    expect(readTuiSnapshot().activeOpenCodeGoAccount).toBe('personal');
+  });
+
+  test('recordActiveOpenCodeGoAccount clears with null', () => {
+    recordActiveOpenCodeGoAccount('personal');
+    recordActiveOpenCodeGoAccount(null);
+    expect(readTuiSnapshot().activeOpenCodeGoAccount).toBeNull();
+  });
+
+  test('recordActiveOpenCodeGoAccount survives other snapshot updates', () => {
+    recordActiveOpenCodeGoAccount('personal');
+    // Write some other data — shouldn't affect activeAccount
+    recordTuiAgentModel({ agentName: 'explorer', model: 'test-model' });
+    expect(readTuiSnapshot().activeOpenCodeGoAccount).toBe('personal');
   });
 });
