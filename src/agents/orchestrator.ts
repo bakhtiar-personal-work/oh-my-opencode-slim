@@ -1,4 +1,5 @@
 import type { AgentConfig } from '@opencode-ai/sdk/v2';
+import { AGENT_DESCRIPTIONS } from './descriptions';
 
 export interface AgentDefinition {
   name: string;
@@ -19,39 +20,11 @@ export function resolvePrompt(
   customPrompt?: string,
   customAppendPrompt?: string,
 ): string {
-  if (customPrompt) return customPrompt;
-  if (customAppendPrompt) return `${base}\n\n${customAppendPrompt}`;
+  if (customPrompt !== undefined) return customPrompt;
+  if (customAppendPrompt !== undefined)
+    return `${base}\n\n${customAppendPrompt}`;
   return base;
 }
-
-// Agent descriptions for the orchestrator prompt
-const AGENT_DESCRIPTIONS: Record<string, string> = {
-  explorer: `<agent name="@explorer">
-- Role: codebase search specialist
-- Delegate when: locate files, usages, symbols, tests, config links
-- Do not use when: exact file is already known and must be read in full
-</agent>`,
-  librarian: `<agent name="@librarian">
-- Role: external docs and API reference specialist
-- Delegate when: library behavior, version details, official examples, upstream GitHub issues/PRs/releases
-- Do not use when: pure language fundamentals or local code discovery
-</agent>`,
-  oracle: `<agent name="@oracle">
-- Role: strategic analysis and code review specialist
-- Delegate when: debugging, architecture, tradeoffs, risk review
-- Do not use when: pure factual answer with zero analysis required
-</agent>`,
-  designer: `<agent name="@designer">
-- Role: UI and UX specialist
-- Delegate when: user-facing design quality, interaction polish, accessibility UX review
-- Do not use when: backend-only or non-visual implementation
-</agent>`,
-  fixer: `<agent name="@fixer">
-- Role: implementation specialist
-- Delegate when: any code edit, test update, scoped execution task
-- Do not use when: discovery or strategy is still unresolved
-</agent>`,
-};
 
 // Validation routing lines that reference agents
 const VALIDATION_ROUTING = [
@@ -75,7 +48,11 @@ const PARALLEL_DELEGATION_EXAMPLES = [
  * @param disabledAgents - Set of disabled agent names to exclude from the prompt
  * @returns The complete orchestrator prompt string
  */
-export function buildOrchestratorPrompt(disabledAgents?: Set<string>): string {
+export function buildOrchestratorPrompt(
+  disabledAgents?: Set<string>,
+  oracleDefaultModel?: string,
+  oracleSmartModel?: string,
+): string {
   // Filter agent descriptions
   const enabledAgents = Object.entries(AGENT_DESCRIPTIONS)
     .filter(([name]) => !disabledAgents?.has(name))
@@ -84,7 +61,7 @@ export function buildOrchestratorPrompt(disabledAgents?: Set<string>): string {
 
   // Filter validation routing lines — remove lines mentioning any disabled agent
   const enabledValidationRouting = VALIDATION_ROUTING.filter((line) => {
-    const mentions = [...line.matchAll(/@(\w+)/g)].map((m) => m[1]);
+    const mentions = [...line.matchAll(/@([\w-]+)/g)].map((m) => m[1]);
     if (mentions.length === 0) return true;
     return mentions.every((name) => !disabledAgents?.has(name));
   }).join('\n');
@@ -92,11 +69,14 @@ export function buildOrchestratorPrompt(disabledAgents?: Set<string>): string {
   // Filter parallel delegation examples — remove lines mentioning any disabled agent
   const enabledParallelExamples = PARALLEL_DELEGATION_EXAMPLES.filter(
     (line) => {
-      const mentions = [...line.matchAll(/@(\w+)/g)].map((m) => m[1]);
+      const mentions = [...line.matchAll(/@([\w-]+)/g)].map((m) => m[1]);
       if (mentions.length === 0) return true;
       return mentions.every((name) => !disabledAgents?.has(name));
     },
   ).join('\n');
+
+  const oracleDefault = oracleDefaultModel ?? '';
+  const oracleSmart = oracleSmartModel ?? oracleDefaultModel ?? '';
 
   return `<role>
 You are a coding orchestrator. Your job is routing, delegation, integration, and verification.
@@ -115,6 +95,7 @@ ${enabledAgents}
 - NEVER retry the same @oracle variant after failed analysis. Escalate variant.
 - NEVER keep looping indefinitely. If the same task fails after 3 @fixer attempts with escalating @oracle analysis, stop and report status.
 - ONLY use low or medium variant when delegating to @fixer. For high/max scope, split into multiple low/medium @fixer sessions.
+- NEVER delegate overlapping searches to multiple @explorers in parallel unless scoped to different, non-overlapping directories (specify them explicitly).
 </constraints>
 
 <routing>
@@ -178,7 +159,7 @@ Action: Two parallel \`delegate_subagent(agent: "explorer", ...)\` calls — one
 </good_example>
 
 <good_example>
-\`delegate_subagent(agent: "oracle", prompt: "...", model: "{{ORACLE_SMART_MODEL_OR_FALLBACK}}", variant: "high", mode: "blocking")\`
+\`delegate_subagent(agent: "oracle", prompt: "...", model: "${oracleSmart}", variant: "high", mode: "blocking")\`
 <reasoning>Explicit model + variant for oracle gives deterministic routing and escalation.</reasoning>
 </good_example>
 
@@ -196,8 +177,8 @@ Action: Two parallel \`delegate_subagent(agent: "explorer", ...)\` calls — one
 </context_gathering>
 
 <model_pool>
-- default: {{ORACLE_DEFAULT_MODEL}}
-- smart: {{ORACLE_SMART_MODEL_OR_FALLBACK}}
+- default: ${oracleDefault}
+- smart: ${oracleSmart}
 </model_pool>
 
 <model_and_variant_selection>
@@ -231,37 +212,37 @@ Escalation sequence for the same unresolved issue:
 <model_examples>
 <default_model_good_example>
 User: "Trace why this retry counter drifts in one service. No auth or security impact."
-Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "{{ORACLE_DEFAULT_MODEL}}", variant: "medium", mode: "blocking")\`
+Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "${oracleDefault}", variant: "medium", mode: "blocking")\`
 <reasoning>Bounded, non-security debugging should start with default model at medium depth.</reasoning>
 </default_model_good_example>
 
 <default_model_bad_example>
 User: "Check JWT verification for signature-bypass paths."
-Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "{{ORACLE_DEFAULT_MODEL}}", variant: "max", mode: "blocking")\`
+Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "${oracleDefault}", variant: "max", mode: "blocking")\`
 <reasoning>Security-critical analysis must not use default model.</reasoning>
 </default_model_bad_example>
 
 <smart_model_good_example>
 User: "Review this auth middleware for privilege-escalation risks."
-Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "{{ORACLE_SMART_MODEL_OR_FALLBACK}}", variant: "high", mode: "blocking")\`
+Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "${oracleSmart}", variant: "high", mode: "blocking")\`
 <reasoning>Security-relevant analysis should route to smart model with high depth.</reasoning>
 </smart_model_good_example>
 
 <smart_model_good_example>
 User: "Could this payment retry flow allow double-charge under race conditions?"
-Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "{{ORACLE_SMART_MODEL_OR_FALLBACK}}", variant: "max", mode: "blocking")\`
+Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "${oracleSmart}", variant: "max", mode: "blocking")\`
 <reasoning>Security-critical and data-integrity risk requires smart model at max depth.</reasoning>
 </smart_model_good_example>
 
 <smart_model_bad_example>
 User: "Quick architectural sanity check for one file."
-Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "{{ORACLE_SMART_MODEL_OR_FALLBACK}}", variant: "max", mode: "blocking")\`
+Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "${oracleSmart}", variant: "max", mode: "blocking")\`
 <reasoning>Over-escalated model and variant for a trivial bounded request; answer directly or use default + medium if delegation is still needed.</reasoning>
 </smart_model_bad_example>
 
 <smart_model_bad_example>
 User: "Simple bounded refactor tradeoff with no ambiguity."
-Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "{{ORACLE_SMART_MODEL_OR_FALLBACK}}", variant: "high", mode: "blocking")\`
+Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "${oracleSmart}", variant: "high", mode: "blocking")\`
 <reasoning>Smart model is unnecessary when default model at medium would be sufficient.</reasoning>
 </smart_model_bad_example>
 </model_examples>
@@ -269,7 +250,7 @@ Action: \`delegate_subagent(agent: "oracle", prompt: "...", model: "{{ORACLE_SMA
 </oracle_protocol>
 
 <execution>
-- For any edit request: @oracle analysis first, @fixer implementation second.
+- For any edit request: @oracle analysis first, @fixer implementation second. EXCEPTION: If the edit is purely mechanical (typo fix, comment update, formatting change, trivial rename), skip @oracle and delegate directly to @fixer with variant: low.
 - For UI/UX change request: @designer review first. If design changes require structural work, follow with @oracle. Then delegate implementation to @fixer.
 - When @designer returns <implementation_notes>, pass the file targets and acceptance criteria to @fixer.
 - Split large changes by folder and run multiple @fixer sessions in parallel.
@@ -293,6 +274,23 @@ ${enabledValidationRouting}
 - Do not launch new delegations after cancellation.
 </cancellation>
 
+<output_format>
+When reporting final results to the user, use this structure:
+<plan>
+- Brief 1-2 line plan before executing
+</plan>
+<delegation_chain>
+- agent: @agent_name (variant) → result summary
+</delegation_chain>
+<results>
+- Synthesized answer to the user's request
+</results>
+<verification>
+- Tests passed: [yes/no/skip]
+- Validation: [passed/failed/skip]
+</verification>
+</output_format>
+
 <communication>
 - Be direct and concise.
 - Ask targeted clarification only when needed.
@@ -302,16 +300,19 @@ ${enabledValidationRouting}
 `;
 }
 
-/** @deprecated Use buildOrchestratorPrompt() instead */
-export const ORCHESTRATOR_PROMPT = buildOrchestratorPrompt();
-
 export function createOrchestratorAgent(
   model?: string | Array<string | { id: string; variant?: string }>,
   customPrompt?: string,
   customAppendPrompt?: string,
   disabledAgents?: Set<string>,
+  oracleDefaultModel?: string,
+  oracleSmartModel?: string,
 ): AgentDefinition {
-  const basePrompt = buildOrchestratorPrompt(disabledAgents);
+  const basePrompt = buildOrchestratorPrompt(
+    disabledAgents,
+    oracleDefaultModel,
+    oracleSmartModel,
+  );
   const prompt = resolvePrompt(basePrompt, customPrompt, customAppendPrompt);
 
   const definition: AgentDefinition = {

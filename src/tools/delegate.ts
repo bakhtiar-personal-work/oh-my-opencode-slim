@@ -1,7 +1,7 @@
 import type { ToolDefinition } from '@opencode-ai/plugin';
 import { tool } from '@opencode-ai/plugin';
 import type { PluginConfig } from '../config';
-import { TMUX_SPAWN_DELAY_MS } from '../config/constants';
+import { ALL_AGENT_NAMES, TMUX_SPAWN_DELAY_MS } from '../config/constants';
 import { getAgentOverride } from '../config/utils';
 import {
   recordSessionDone,
@@ -19,13 +19,6 @@ import type { SubagentDepthTracker } from '../utils/subagent-depth';
 
 type OpencodeClient = import('@opencode-ai/plugin').PluginInput['client'];
 
-const SUBAGENT_OPTIONS = [
-  'explorer',
-  'librarian',
-  'oracle',
-  'fixer',
-  'designer',
-] as const;
 const VARIANT_OPTIONS = ['low', 'medium', 'high', 'max'] as const;
 const MODE_OPTIONS = ['blocking', 'fire_forget'] as const;
 
@@ -36,6 +29,10 @@ export function createDelegateTools(
   multiplexerEnabled: boolean,
 ): Record<string, ToolDefinition> {
   const directory = ctx.directory;
+
+  const subagentOptions: readonly string[] = [
+    ...ALL_AGENT_NAMES.filter((name) => name !== 'orchestrator'),
+  ];
 
   function recordSessionTree(
     sessionId: string,
@@ -175,7 +172,7 @@ export function createDelegateTools(
       'Blocking mode waits for the result; fire_forget returns a session_id to collect later.',
     args: {
       agent: tool.schema
-        .enum(SUBAGENT_OPTIONS)
+        .enum(subagentOptions)
         .describe('Target specialist subagent'),
       prompt: tool.schema
         .string()

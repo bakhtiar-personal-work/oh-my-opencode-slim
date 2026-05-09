@@ -8,7 +8,10 @@
  * out of version control and the published schema.
  */
 
-import { recordOpencodeGoUsage } from '../tui-state';
+import {
+  recordOpencodeGoUsage,
+  removeOpencodeGoUsageEntry,
+} from '../tui-state';
 import { createInternalAgentTextPart } from '../utils';
 import {
   loadAccounts,
@@ -23,6 +26,7 @@ import type { OpenCodeGoUsageEntry } from './types';
 
 const GO_COMMAND = 'go';
 const DEFAULT_REFRESH_INTERVAL_MS = 60_000;
+const DEFAULT_PERIODIC_INTERVAL_MS = 600_000; // 10 minutes
 
 function formatResetTime(resetTimeIso: string): string {
   const diff = new Date(resetTimeIso).getTime() - Date.now();
@@ -48,9 +52,16 @@ export class UsageService {
   private pendingRefresh: Promise<OpenCodeGoUsageEntry[]> | null = null;
   private cached: OpenCodeGoUsageEntry[] = [];
   private refreshIntervalMs: number;
+  private periodicTimer: ReturnType<typeof setInterval> | null = null;
+  private periodicIntervalMs: number;
 
-  constructor(refreshIntervalMs = DEFAULT_REFRESH_INTERVAL_MS) {
+  constructor(
+    refreshIntervalMs = DEFAULT_REFRESH_INTERVAL_MS,
+    periodicIntervalMs = DEFAULT_PERIODIC_INTERVAL_MS,
+  ) {
     this.refreshIntervalMs = refreshIntervalMs;
+    this.periodicIntervalMs = periodicIntervalMs;
+    this.startPeriodicRefresh();
   }
 
   /** Get accounts from local storage. */
@@ -84,9 +95,13 @@ export class UsageService {
 
   private async _doRefresh(): Promise<OpenCodeGoUsageEntry[]> {
     this.lastRefresh = Date.now();
+    this.resetPeriodicTimer();
     const accounts = this.getAccounts();
 
-    if (accounts.length === 0) return [];
+    if (accounts.length === 0) {
+      recordOpencodeGoUsage([]);
+      return [];
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -138,6 +153,43 @@ export class UsageService {
   }
 
   /**
+   * Start the periodic background refresh timer.
+   */
+  private startPeriodicRefresh(): void {
+    this.periodicTimer = setInterval(() => {
+      this.refresh(false).catch(() => {
+        // Best-effort: errors are captured in the entries
+      });
+    }, this.periodicIntervalMs);
+    // Don't block Node exit
+    if (this.periodicTimer && typeof this.periodicTimer.unref === 'function') {
+      this.periodicTimer.unref();
+    }
+  }
+
+  /**
+   * Reset the periodic timer — called after any actual refresh to
+   * restart the countdown.
+   */
+  private resetPeriodicTimer(): void {
+    if (this.periodicTimer !== null) {
+      clearInterval(this.periodicTimer);
+      this.periodicTimer = null;
+    }
+    this.startPeriodicRefresh();
+  }
+
+  /**
+   * Clean up the periodic timer. Call when the plugin is shutting down.
+   */
+  dispose(): void {
+    if (this.periodicTimer !== null) {
+      clearInterval(this.periodicTimer);
+      this.periodicTimer = null;
+    }
+  }
+
+  /**
    * Handle slash commands: /go.
    */
   async handleCommandExecuteBefore(
@@ -181,10 +233,10 @@ export class UsageService {
           return;
         }
         saveAccount({ name, workspaceId, authCookie });
+        // Refresh to update sidebar immediately
+        this.refresh(true).catch(() => {});
         output.parts.push(
-          createInternalAgentTextPart(
-            `✅ Added account "${name}".`,
-          ),
+          createInternalAgentTextPart(`✅ Added account "${name}".`),
         );
         break;
       }
@@ -203,6 +255,8 @@ export class UsageService {
           output.parts.push(
             createInternalAgentTextPart(`✅ Removed account "${name}".`),
           );
+          // Clear sidebar entry immediately
+          removeOpencodeGoUsageEntry(name);
         } else {
           output.parts.push(
             createInternalAgentTextPart(`Account "${name}" not found.`),
@@ -229,6 +283,7 @@ export class UsageService {
               `✅ Updated auth cookie for "${name}".`,
             ),
           );
+          this.refresh(true).catch(() => {});
         } else {
           output.parts.push(
             createInternalAgentTextPart(`Account "${name}" not found.`),
@@ -266,9 +321,7 @@ export class UsageService {
       case 'refresh': {
         await this.refresh(true);
         output.parts.push(
-          createInternalAgentTextPart(
-            '✅ Refreshed all accounts.',
-          ),
+          createInternalAgentTextPart('✅ Refreshed all accounts.'),
         );
         break;
       }
@@ -310,9 +363,11 @@ export class UsageService {
       };
     }
   }
-
 }
 
-export function createUsageService(): UsageService {
-  return new UsageService();
+export function createUsageService(
+  refreshIntervalMs?: number,
+  periodicIntervalMs?: number,
+): UsageService {
+  return new UsageService(refreshIntervalMs, periodicIntervalMs);
 }

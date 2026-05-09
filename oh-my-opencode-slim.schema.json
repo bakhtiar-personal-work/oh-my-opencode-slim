@@ -264,14 +264,6 @@
                 "type": "string"
               }
             },
-            "prompt": {
-              "type": "string",
-              "minLength": 1
-            },
-            "orchestratorPrompt": {
-              "type": "string",
-              "minLength": 1
-            },
             "options": {
               "type": "object",
               "propertyNames": {
@@ -347,14 +339,6 @@
             "items": {
               "type": "string"
             }
-          },
-          "prompt": {
-            "type": "string",
-            "minLength": 1
-          },
-          "orchestratorPrompt": {
-            "type": "string",
-            "minLength": 1
           },
           "options": {
             "type": "object",

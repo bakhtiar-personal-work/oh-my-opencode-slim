@@ -4,8 +4,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   readTuiSnapshot,
+  recordOpencodeGoUsage,
   recordTuiAgentModel,
   recordTuiAgentModels,
+  removeOpencodeGoUsageEntry,
 } from './tui-state';
 
 let previousXdgDataHome: string | undefined;
@@ -61,5 +63,96 @@ describe('tui-state persistence', () => {
       orchestrator: 'openai/gpt-5.5',
       explorer: 'openai/gpt-5.4-mini',
     });
+  });
+});
+
+describe('opencodeGoUsage', () => {
+  test('recordOpencodeGoUsage clears stale entries', () => {
+    // First write two entries
+    recordOpencodeGoUsage([
+      {
+        accountName: 'personal',
+        workspaceId: 'wrk_123',
+        fetchedAt: Date.now(),
+        error: undefined,
+      },
+      {
+        accountName: 'work',
+        workspaceId: 'wrk_456',
+        fetchedAt: Date.now(),
+        error: undefined,
+      },
+    ]);
+
+    expect(readTuiSnapshot().opencodeGoUsage).toHaveProperty('personal');
+    expect(readTuiSnapshot().opencodeGoUsage).toHaveProperty('work');
+
+    // Now write only one entry — the other should be gone
+    recordOpencodeGoUsage([
+      {
+        accountName: 'personal',
+        workspaceId: 'wrk_123',
+        fetchedAt: Date.now(),
+        error: undefined,
+      },
+    ]);
+
+    const snapshot = readTuiSnapshot();
+    expect(snapshot.opencodeGoUsage).toHaveProperty('personal');
+    expect(snapshot.opencodeGoUsage).not.toHaveProperty('work');
+  });
+
+  test('recordOpencodeGoUsage handles empty array (clears all)', () => {
+    recordOpencodeGoUsage([
+      {
+        accountName: 'personal',
+        workspaceId: 'wrk_123',
+        fetchedAt: Date.now(),
+        error: undefined,
+      },
+    ]);
+    expect(readTuiSnapshot().opencodeGoUsage).toHaveProperty('personal');
+
+    // Empty array should clear everything
+    recordOpencodeGoUsage([]);
+    expect(readTuiSnapshot().opencodeGoUsage).toEqual({});
+  });
+
+  test('removeOpencodeGoUsageEntry deletes a specific entry', () => {
+    recordOpencodeGoUsage([
+      {
+        accountName: 'personal',
+        workspaceId: 'wrk_123',
+        fetchedAt: Date.now(),
+        error: undefined,
+      },
+      {
+        accountName: 'work',
+        workspaceId: 'wrk_456',
+        fetchedAt: Date.now(),
+        error: undefined,
+      },
+    ]);
+
+    removeOpencodeGoUsageEntry('personal');
+
+    const snapshot = readTuiSnapshot();
+    expect(snapshot.opencodeGoUsage).not.toHaveProperty('personal');
+    expect(snapshot.opencodeGoUsage).toHaveProperty('work');
+  });
+
+  test('removeOpencodeGoUsageEntry is idempotent for unknown names', () => {
+    recordOpencodeGoUsage([
+      {
+        accountName: 'personal',
+        workspaceId: 'wrk_123',
+        fetchedAt: Date.now(),
+        error: undefined,
+      },
+    ]);
+
+    // Removing a name that doesn't exist should not throw
+    expect(() => removeOpencodeGoUsageEntry('nonexistent')).not.toThrow();
+    expect(readTuiSnapshot().opencodeGoUsage).toHaveProperty('personal');
   });
 });

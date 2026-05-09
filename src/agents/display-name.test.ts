@@ -183,18 +183,4 @@ describe('displayName', () => {
     expect(sdkConfigs.orchestrator.mode).toBe('primary');
     expect(sdkConfigs.orchestrator.hidden).toBe(true);
   });
-
-  test('keeps internal-only council agents hidden even with displayName configured', () => {
-    const config: PluginConfig = {
-      disabled_agents: [],
-      agents: {
-        councillor: { displayName: 'reviewer' },
-      },
-    };
-
-    const sdkConfigs = getAgentConfigs(config);
-
-    expect(sdkConfigs.reviewer).toBeUndefined();
-    expect(sdkConfigs.councillor?.hidden).toBe(true);
-  });
 });

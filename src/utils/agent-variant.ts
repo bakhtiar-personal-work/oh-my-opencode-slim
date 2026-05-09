@@ -1,7 +1,6 @@
 import {
   ALL_AGENT_NAMES,
   getAgentOverride,
-  getCustomAgentNames,
   type PluginConfig,
 } from '../config';
 import { log } from './logger';
@@ -21,12 +20,8 @@ export function normalizeAgentName(agentName: string): string {
   return trimmed.startsWith('@') ? trimmed.slice(1) : trimmed;
 }
 
-function getRuntimeAgentNames(config?: PluginConfig): string[] {
-  const unique = new Set<string>([
-    ...ALL_AGENT_NAMES,
-    ...getCustomAgentNames(config),
-  ]);
-  return [...unique];
+function getRuntimeAgentNames(_config?: PluginConfig): string[] {
+  return [...ALL_AGENT_NAMES];
 }
 
 /**

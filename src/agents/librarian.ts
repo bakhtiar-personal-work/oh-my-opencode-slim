@@ -1,4 +1,5 @@
 import type { AgentDefinition } from './orchestrator';
+import { resolvePrompt } from './orchestrator';
 
 const LIBRARIAN_PROMPT = `<role>
 You are Librarian, a documentation and external research specialist.
@@ -64,13 +65,11 @@ export function createLibrarianAgent(
   customPrompt?: string,
   customAppendPrompt?: string,
 ): AgentDefinition {
-  let prompt = LIBRARIAN_PROMPT;
-
-  if (customPrompt) {
-    prompt = customPrompt;
-  } else if (customAppendPrompt) {
-    prompt = `${LIBRARIAN_PROMPT}\n\n${customAppendPrompt}`;
-  }
+  const prompt = resolvePrompt(
+    LIBRARIAN_PROMPT,
+    customPrompt,
+    customAppendPrompt,
+  );
 
   return {
     name: 'librarian',

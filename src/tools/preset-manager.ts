@@ -238,7 +238,7 @@ export function createPresetManager(ctx: PluginInput, config: PluginConfig) {
    * SDK AgentConfig fields that client.config.update() can apply at runtime.
    *
    * Excluded fields and why:
-   * - prompt, orchestratorPrompt: require restart (resolved at init by config() hook)
+   * - prompt: resolved at init by config() hook, not part of SDK AgentConfig
    * - skills, mcps: plugin-level concern, not part of SDK AgentConfig
    * - displayName: plugin-level concern, not part of SDK AgentConfig
    */

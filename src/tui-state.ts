@@ -284,10 +284,17 @@ export function recordSessionDone(sessionID: string): void {
 
 export function recordOpencodeGoUsage(usage: OpenCodeGoUsageEntry[]): void {
   updateSnapshot((snapshot) => {
+    snapshot.opencodeGoUsage = {};
     for (const entry of usage) {
       if (entry.accountName) {
         snapshot.opencodeGoUsage[entry.accountName] = entry;
       }
     }
+  });
+}
+
+export function removeOpencodeGoUsageEntry(name: string): void {
+  updateSnapshot((snapshot) => {
+    delete snapshot.opencodeGoUsage[name];
   });
 }

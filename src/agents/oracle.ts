@@ -1,4 +1,5 @@
 import type { AgentDefinition } from './orchestrator';
+import { resolvePrompt } from './orchestrator';
 
 const ORACLE_PROMPT = `<role>
 You are Oracle, a strategic technical advisor and code reviewer focused on high-leverage analysis.
@@ -12,9 +13,8 @@ You are Oracle, a strategic technical advisor and code reviewer focused on high-
 </capabilities>
 
 <tool_routing>
-- Use local repository context first.
-- Use context7 for targeted fact checks when diagnosis depends on external framework or library behavior, version-specific API details, or migration notes.
-- Prefer concise citations to the exact doc/source used for non-obvious claims.
+- Use repository context provided by the orchestrator (file paths, symbols, snippets). For external facts (framework behavior, API details, migration notes), rely on context provided by the orchestrator. If critical external information is missing, note it in <blocked> so the orchestrator can dispatch @librarian.
+- Prefer concise citations to the exact source used for non-obvious claims.
 </tool_routing>
 
 <constraints>
@@ -85,13 +85,7 @@ export function createOracleAgent(
   customPrompt?: string,
   customAppendPrompt?: string,
 ): AgentDefinition {
-  let prompt = ORACLE_PROMPT;
-
-  if (customPrompt) {
-    prompt = customPrompt;
-  } else if (customAppendPrompt) {
-    prompt = `${ORACLE_PROMPT}\n\n${customAppendPrompt}`;
-  }
+  const prompt = resolvePrompt(ORACLE_PROMPT, customPrompt, customAppendPrompt);
 
   return {
     name: 'oracle',
@@ -99,6 +93,7 @@ export function createOracleAgent(
       'Strategic technical advisor. Use for architecture decisions, complex debugging, code review, simplification, and engineering guidance.',
     config: {
       model,
+      // 0.15 provides enough structure for analytical reasoning while allowing slight flexibility for nuanced tradeoff evaluation
       temperature: 0.15,
       prompt,
     },

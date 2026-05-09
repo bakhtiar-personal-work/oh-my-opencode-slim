@@ -1,4 +1,5 @@
 import type { AgentDefinition } from './orchestrator';
+import { resolvePrompt } from './orchestrator';
 
 const DESIGNER_PROMPT = `<role>
 You are Designer, a UI and UX specialist focused on polished, usable interfaces.
@@ -77,13 +78,11 @@ export function createDesignerAgent(
   customPrompt?: string,
   customAppendPrompt?: string,
 ): AgentDefinition {
-  let prompt = DESIGNER_PROMPT;
-
-  if (customPrompt) {
-    prompt = customPrompt;
-  } else if (customAppendPrompt) {
-    prompt = `${DESIGNER_PROMPT}\n\n${customAppendPrompt}`;
-  }
+  const prompt = resolvePrompt(
+    DESIGNER_PROMPT,
+    customPrompt,
+    customAppendPrompt,
+  );
 
   return {
     name: 'designer',
@@ -91,6 +90,7 @@ export function createDesignerAgent(
       'UI/UX design, review, and implementation. Use for styling, responsive design, component architecture and visual polish.',
     config: {
       model,
+      // 0.3 provides enough variation for creative UI texture choices while staying deterministic enough for consistent design-system application
       temperature: 0.3,
       prompt,
     },

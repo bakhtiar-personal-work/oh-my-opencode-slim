@@ -1,5 +1,5 @@
 /**
- * Image hook — no-op since observer was removed.
+ * Image hook — currently a no-op.
  * Images pass through naturally to the model.
  */
 

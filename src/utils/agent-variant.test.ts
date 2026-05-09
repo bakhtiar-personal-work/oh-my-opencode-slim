@@ -204,26 +204,6 @@ describe('rewriteDisplayNameMentions', () => {
       ),
     ).toBe('email foo@advisor.com and ask @oracle directly');
   });
-
-  test('resolves custom agents by displayName for variant/runtime lookups', () => {
-    const config = {
-      agents: {
-        'custom-reviewer': {
-          displayName: 'reviewer',
-          variant: 'high',
-          model: 'openai/gpt-5.5',
-        },
-      },
-    } as PluginConfig;
-
-    expect(resolveRuntimeAgentName(config, '@reviewer')).toBe(
-      'custom-reviewer',
-    );
-    expect(
-      rewriteDisplayNameMentions(config, 'ask @reviewer for details'),
-    ).toBe('ask @custom-reviewer for details');
-    expect(resolveAgentVariant(config, '@reviewer')).toBe('high');
-  });
 });
 
 describe('applyAgentVariant', () => {

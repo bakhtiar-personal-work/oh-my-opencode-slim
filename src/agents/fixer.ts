@@ -1,4 +1,5 @@
 import type { AgentDefinition } from './orchestrator';
+import { resolvePrompt } from './orchestrator';
 
 const FIXER_PROMPT = `<role>
 You are Fixer, a fast implementation specialist.
@@ -17,6 +18,12 @@ You are Fixer, a fast implementation specialist.
 - NEVER refactor beyond requested scope.
 - NEVER add unrequested features.
 </constraints>
+
+<variant_policy>
+- low: single-file, single-function edit; bounded scope change
+- medium: multi-file change within one module; small refactor across 2-3 files
+- high/max: NOT supported — the orchestrator constrains fixer to low/medium. If high/max scope is needed, split into multiple low/medium fixer sessions.
+</variant_policy>
 
 <insufficient_context>
 - Read up to five additional directly relevant files (e.g. interface definitions, callers, sibling implementations, nearest tests).
@@ -58,13 +65,7 @@ export function createFixerAgent(
   customPrompt?: string,
   customAppendPrompt?: string,
 ): AgentDefinition {
-  let prompt = FIXER_PROMPT;
-
-  if (customPrompt) {
-    prompt = customPrompt;
-  } else if (customAppendPrompt) {
-    prompt = `${FIXER_PROMPT}\n\n${customAppendPrompt}`;
-  }
+  const prompt = resolvePrompt(FIXER_PROMPT, customPrompt, customAppendPrompt);
 
   return {
     name: 'fixer',

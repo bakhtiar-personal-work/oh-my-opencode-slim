@@ -1,4 +1,5 @@
 import type { AgentDefinition } from './orchestrator';
+import { resolvePrompt } from './orchestrator';
 
 const EXPLORER_PROMPT = `<role>
 You are Explorer, a fast codebase navigation specialist.
@@ -35,6 +36,12 @@ You are Explorer, a fast codebase navigation specialist.
 - NEVER return raw match dumps over ~30 lines; summarize and group by file.
 </constraints>
 
+<variant_policy>
+- low: locate one file/pattern in a known directory; single-concept search
+- medium: multi-directory cross-reference; find all callers/usages of a symbol
+- high: exhaustive codebase-wide usage analysis across all directories; comprehensive dependency mapping
+</variant_policy>
+
 <stale_codemap>
 - Use codemap as a fast orientation aid only.
 - If codemap and live search disagree, trust live search results and call out the discrepancy.
@@ -60,13 +67,11 @@ export function createExplorerAgent(
   customPrompt?: string,
   customAppendPrompt?: string,
 ): AgentDefinition {
-  let prompt = EXPLORER_PROMPT;
-
-  if (customPrompt) {
-    prompt = customPrompt;
-  } else if (customAppendPrompt) {
-    prompt = `${EXPLORER_PROMPT}\n\n${customAppendPrompt}`;
-  }
+  const prompt = resolvePrompt(
+    EXPLORER_PROMPT,
+    customPrompt,
+    customAppendPrompt,
+  );
 
   return {
     name: 'explorer',
