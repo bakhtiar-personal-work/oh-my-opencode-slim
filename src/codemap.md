@@ -10,9 +10,9 @@
 ## Design
 
 - Agent creation follows explicit factories (`agents/index.ts`, per-agent creators under `agents/`) with override/permission helpers (`config/schema.ts`, `cli/skills.ts`, `config/agent-mcps.ts`) so defaults live in `config/constants.ts`, prompts can be swapped via `config/loader.ts`, and variant labels propagate through `utils/agent-variant.ts`.
-- Session orchestration combines `SubagentDepthTracker`, `MultiplexerSessionManager`, `CouncilManager`, and `ForegroundFallbackManager`; these coordinate subagent depth limits, pane lifecycle, council session creation, and foreground model failover.
+- Session orchestration combines `SubagentDepthTracker`, `MultiplexerSessionManager`, and `ForegroundFallbackManager`; these coordinate subagent depth limits, pane lifecycle, and foreground model failover.
 - Hook composition is centralized in `src/index.ts`: lifecycle event handlers and tool transform handlers fan out to specialized hooks, then some hooks post-process system messages in-place for provider compatibility.
-- Supplemental tools bundle AST-grep search/replace, council orchestration, and web fetching behind the OpenCode `tool` interface and are mounted in `index.ts` alongside hooks and MCP helpers.
+- Supplemental tools bundle AST-grep search/replace and web fetching behind the OpenCode `tool` interface and are mounted in `index.ts` alongside hooks and MCP helpers.
 
 ## Flow
 
@@ -20,8 +20,8 @@
   - `loadPluginConfig` builds effective config from user/project presets.
   - `createAgents` + `getAgentConfigs` construct final agent registry and resolved prompts.
   - Runtime model chains are built from configured arrays plus fallback chains.
-  - `SubagentDepthTracker`, `MultiplexerSessionManager`, `CouncilManager`, `ForegroundFallbackManager`, and hook factories are initialized before registration.
-- Plugin registration: `index.ts` merges/overlays agent configs into OpenCode's config, registers tools (`council`, `webfetch`, `ast_grep_*`, todo tools), MCPs (`createBuiltinMcps`), and all hook handlers (`event`, `tool.execute.before/after`, `experimental.chat.system/messages.transform`, `command.execute.before`, etc.).
+  - `SubagentDepthTracker`, `MultiplexerSessionManager`, `ForegroundFallbackManager`, and hook factories are initialized before registration.
+- Plugin registration: `index.ts` merges/overlays agent configs into OpenCode's config, registers tools (`webfetch`, `ast_grep_*`, todo tools), MCPs (`createBuiltinMcps`), and all hook handlers (`event`, `tool.execute.before/after`, `experimental.chat.system/messages.transform`, `command.execute.before`, etc.).
 - Runtime event flow (`event`): updates depth tree, multiplexer pane state, auto-update checks, interview/preset state, and task-session cleanup for deleted sessions.
 - `experimental.chat.system.transform` pipeline:
   - injects orchestrator/system-level reminders when required,

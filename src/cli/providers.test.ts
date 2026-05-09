@@ -75,8 +75,6 @@ describe('providers', () => {
     expect(agents.orchestrator.variant).toBe('medium');
     expect(agents.oracle.model).toBe('opencode-go/deepseek-v4-flash');
     expect(agents.oracle.variant).toBe('medium');
-    expect(agents.council.model).toBe('opencode-go/glm-5.1');
-    expect(agents.council.variant).toBe('high');
     expect(agents.librarian.model).toBe('opencode-go/qwen-3.6-plus');
     expect(agents.librarian.variant).toBe('low');
     expect(agents.explorer.model).toBe('opencode-go/qwen-3.6-plus');

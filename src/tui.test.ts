@@ -27,7 +27,6 @@ describe('tui sidebar agents', () => {
     );
 
     expect(agentNames).toEqual(['explorer', 'fixer']);
-    expect(agentNames).not.toContain('observer');
     expect(agentNames).not.toContain('librarian');
   });
 
@@ -36,8 +35,6 @@ describe('tui sidebar agents', () => {
 
     expect(agentNames).toContain('explorer');
     expect(agentNames).toContain('fixer');
-    expect(agentNames).not.toContain('observer');
-    expect(agentNames).not.toContain('council');
     expect(agentNames).not.toContain('nonexistent-agent');
   });
 });

@@ -9,7 +9,7 @@ Complete reference for all configuration files and options in oh-my-opencode-sli
 | File | Purpose |
 |------|---------|
 | `~/.config/opencode/opencode.json` | OpenCode core settings (plugin registration, providers) |
-| `~/.config/opencode/oh-my-opencode-slim.json` | Plugin settings — agents, multiplexer, MCPs, council |
+| `~/.config/opencode/oh-my-opencode-slim.json` | Plugin settings — agents, multiplexer, MCPs |
 | `~/.config/opencode/oh-my-opencode-slim.jsonc` | Same, but with JSONC (comments + trailing commas). Takes precedence over `.json` if both exist |
 | `.opencode/oh-my-opencode-slim.json` | Project-local overrides (optional, checked first) |
 
@@ -116,14 +116,7 @@ Presets can also be switched at runtime without restarting using the `/preset` c
 | `fallback.retryDelayMs` | number | `500` | Delay between retry attempts |
 | `fallback.chains.<agent>` | string[] | — | Ordered fallback model IDs for an agent |
 | `fallback.retry_on_empty` | boolean | `true` | Treat silent empty provider responses (0 tokens) as failures and retry. Set `false` to accept empty responses |
-| `council.presets` | object | — | **Required if using council.** Named councillor presets |
-| `council.presets.<name>.<councillor>.model` | string | — | Councillor model |
-| `council.presets.<name>.<councillor>.variant` | string | — | Councillor variant |
-| `council.presets.<name>.<councillor>.prompt` | string | — | Optional role guidance for the councillor |
-| `council.default_preset` | string | `"default"` | Default preset when none is specified |
-| `council.timeout` | number | `180000` | Per-councillor timeout (ms) |
-| `council.councillor_execution_mode` | string | `"parallel"` | Run councillors in `parallel` or `serial`; use `serial` for single-model setups |
-| `council.councillor_retries` | number | `3` | Max retries per councillor on empty provider response (0–5) |
+
 | `todoContinuation.maxContinuations` | integer | `5` | Max consecutive auto-continuations before stopping (1–50) |
 | `todoContinuation.cooldownMs` | integer | `3000` | Delay in ms before auto-continuing — gives user time to abort (0–30000) |
 | `todoContinuation.autoEnable` | boolean | `false` | Automatically enable auto-continue when session has enough todos |
@@ -133,14 +126,6 @@ Presets can also be switched at runtime without restarting using the `/preset` c
 | `interview.autoOpenBrowser` | boolean | `true` | Automatically open the interview UI in your default browser during interactive runs; suppressed in tests and CI |
 | `interview.port` | integer | `0` | Interview server port (0–65535). `0` = OS-assigned random port (per-session mode). Any value > 0 enables [dashboard mode](interview.md#dashboard-mode) |
 | `interview.dashboard` | boolean | `false` | Enable [dashboard mode](interview.md#dashboard-mode) on the default port (43211). Setting `port` > 0 also enables dashboard mode. If both are set, `port` takes precedence |
-
-### Council configuration note
-
-- The **Council agent model** is configured like any other agent, for example in
-  `presets.<name>.council.model`.
-- The **councillor models** are configured separately under
-  `council.presets.<name>.<councillor>.model`.
-- Deprecated `council.master*` fields should not be used in new configs.
 
 ### Manual Update Mode
 

@@ -1729,7 +1729,7 @@ describe('createTodoContinuationHook', () => {
     });
   });
 
-  describe('council review findings', () => {
+  describe('review findings', () => {
     describe('CRITICAL-1: counter bypass via session.status→busy', () => {
       test('counter persists when busy fires during auto-injection', async () => {
         let promptResolve!: () => void;

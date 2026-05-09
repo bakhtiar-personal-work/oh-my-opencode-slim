@@ -62,7 +62,7 @@ Cross-cutting runtime utilities used by orchestration, hooks, and plugin I/O.
 ### `session.ts`
 
 - Composes prompt parts and extracts normalized session output for text/call/result flows.
-- Hosts shared parsing/formatting utilities used by council and tool execution layers.
+- Hosts shared parsing/formatting utilities used by tool execution layers.
 
 ### `task.ts`
 
@@ -76,7 +76,6 @@ Cross-cutting runtime utilities used by orchestration, hooks, and plugin I/O.
 
 - **Consumers**
   - `src/multiplexer/*`: `SubagentDepthTracker` and `tmux.ts` integration.
-  - `src/council/council-manager.ts`: depth control and session extraction helpers.
   - `src/hooks/*`: marker detection, polling, and session-aware state helpers.
   - `src/hooks/task-session-manager`: `SessionManager`, `parseTaskIdFromTaskOutput`, and `deriveTaskSessionLabel` provide resumable-session workflow; the plugin’s system-transform passes the hook output through `collapseSystemInPlace` after this manager injects prompts.
 

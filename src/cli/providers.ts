@@ -48,7 +48,6 @@ export const MODEL_MAPPINGS = {
   'opencode-go': {
     orchestrator: { model: 'opencode-go/deepseek-v4-pro', variant: 'medium' },
     oracle: { model: 'opencode-go/deepseek-v4-flash', variant: 'medium' },
-    council: { model: 'opencode-go/glm-5.1', variant: 'high' },
     librarian: { model: 'opencode-go/qwen-3.6-plus', variant: 'low' },
     explorer: { model: 'opencode-go/qwen-3.6-plus', variant: 'low' },
     designer: { model: 'opencode-go/mimo-v2.5-pro', variant: 'medium' },

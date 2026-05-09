@@ -68,12 +68,11 @@ oh-my-opencode-slim/
 │   ├── agents/       # Agent factories (orchestrator, explorer, oracle, etc.)
 │   ├── cli/          # CLI entry point
 │   ├── config/       # Constants, schemas, MCP defaults
-│   ├── council/      # Council manager (multi-LLM session orchestration)
 │   ├── hooks/        # OpenCode lifecycle hooks
 │   ├── mcp/          # MCP server definitions
 │   ├── multiplexer/  # Tmux/Zellij pane integration for child sessions
 │   ├── skills/       # Skill definitions (included in package publish)
-│   ├── tools/        # Tool definitions (council, webfetch, AST-grep, etc.)
+│   ├── tools/        # Tool definitions (webfetch, AST-grep, etc.)
 │   └── utils/        # Shared utilities (tmux, session helpers)
 ├── dist/             # Built JavaScript and declarations
 ├── docs/             # User-facing documentation
@@ -132,7 +131,7 @@ await delay(250)
 spawn([tmux, "kill-pane", "-t", paneId])
 ```
 
-**2. Session Abort Timing (src/council/council-manager.ts)**
+**2. Session Abort Timing**
 - Call `session.abort()` AFTER extracting task results
 - This ensures content is preserved before session termination
 - Triggers `session.deleted` event for cleanup
@@ -245,7 +244,6 @@ OpenCode has a built-in `/review` command that automatically performs comprehens
 - Agent factories are in `src/agents/` — each agent has its own file + optional `.test.ts`
 - Skills are located in `src/skills/` (included in package publish)
 - Multiplexer session management is in `src/multiplexer/`
-- Council manager (multi-LLM orchestration) is in `src/council/`
 - Tmux utilities are in `src/utils/tmux.ts`
 - 468 tests across 35 files — run `bun test` to verify
 

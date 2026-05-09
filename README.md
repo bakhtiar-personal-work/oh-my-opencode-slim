@@ -248,56 +248,7 @@ If any agent fails to respond, check your provider authentication and config fil
 
 ---
 
-### 04. Council: The Chorus of Minds
-
-> [!NOTE]
-> **Why doesn't Orchestrator auto-call Council more often?** This is intentional. Council runs multiple models at once, so automatic delegation is kept strict because it is usually the highest-cost path in the system. In practice, Council is meant to be used manually when you want it, for example: <code>@council compare these two architectures</code>.
-
-<table>
-  <tr>
-    <td width="30%" align="center" valign="top">
-      <img src="img/council.png" width="240" style="border-radius: 10px;">
-      <br><sub><i>Many minds, one verdict.</i></sub>
-    </td>
-    <td width="70%" valign="top">
-      The Council is not a lone being but a chamber of minds summoned when one answer is not enough. It sends your question to multiple models in parallel, gathers their competing judgments, and then the Council agent itself distills the strongest ideas into a single verdict. Where a solitary agent may miss a path, the Council cross-examines possibility itself.
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <b>Role:</b> <code>Multi-LLM consensus and synthesis</code>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <b>Prompt:</b> <a href="src/agents/council.ts"><code>council.ts</code></a>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <b>Guide:</b> <a href="docs/council.md"><code>docs/council.md</code></a>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <b>Default Setup:</b> <code>Config-driven</code> — councillors come from <code>council.presets</code> and the Council agent model comes from your normal <code>council</code> agent config
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <b>Recommended Setup:</b> <code>Strong Council model</code> + <code>diverse councillors</code> across providers
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <b>Model Guidance:</b> Use a strong synthesis model for the Council agent and diverse models as councillors. The value of Council comes from comparing different model perspectives, not just picking the single strongest model everywhere.
-    </td>
-  </tr>
-</table>
-
----
-
-### 05. Librarian: The Weaver of Knowledge
+### 04. Librarian: The Weaver of Knowledge
 
 <table>
   <tr>
@@ -338,7 +289,7 @@ If any agent fails to respond, check your provider authentication and config fil
 
 ---
 
-### 06. Designer: The Guardian of Aesthetics
+### 05. Designer: The Guardian of Aesthetics
 
 <table>
   <tr>
@@ -379,7 +330,7 @@ If any agent fails to respond, check your provider authentication and config fil
 
 ---
 
-### 07. Fixer: The Last Builder
+### 06. Fixer: The Last Builder
 
 <table>
   <tr>
@@ -420,48 +371,6 @@ If any agent fails to respond, check your provider authentication and config fil
 
 ---
 
-## Optional Agents
-
-### Observer: The Silent Witness
-
-> [!NOTE]
-> **Why a separate agent?** If your Orchestrator model is not multimodal, enable Observer to handle images, screenshots, PDFs, and other visual files. Observer is disabled by default and gives the Orchestrator a dedicated multimodal reader without forcing you to change your main reasoning model. Set `disabled_agents: []` and an `observer` model in your configuration.
-
-<table>
-  <tr>
-    <td width="30%" align="center" valign="top">
-      <img src="img/observer.jpg" width="240" style="border-radius: 10px;">
-      <br><sub><i>The eye that reads what others cannot.</i></sub>
-    </td>
-    <td width="70%" valign="top">
-
-**Read-only visual analysis** — interprets images, screenshots, PDFs, and diagrams. Returns structured observations to the orchestrator without loading raw file bytes into the main context window.
-
-- Images, screenshots, diagrams → `read` tool (native image support)
-- PDFs and binary documents → `read` tool (text + structure extraction)
-- **Disabled by default** — enable with `"disabled_agents": []` and configure a vision-capable model
-
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <b>Prompt:</b> <a href="src/agents/observer.ts"><code>observer.ts</code></a>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <b>Default Model:</b> <code>openai/gpt-5.4-mini</code> — <i>configure a vision-capable model to enable</i>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2">
-      <b>Model Guidance:</b> Choose a vision-capable model if you want the agent to read screenshots, images, PDFs, and other visual files.
-    </td>
-  </tr>
-</table>
-
----
-
 ## 📚 Documentation
 
 Use this section as a map: start with installation, then jump to features, configuration, or example presets depending on what you need.
@@ -478,7 +387,6 @@ Use this section as a map: start with installation, then jump to features, confi
 
 | Doc | What it covers |
 |-----|----------------|
-| **[Council](docs/council.md)** | Run multiple models in parallel and synthesize a single answer with `@council` |
 | **[Interview](docs/interview.md)** | Turn rough ideas into a structured markdown spec through a browser-based Q&A flow |
 | **[Multiplexer Integration](docs/multiplexer-integration.md)** | Watch agents work live in Tmux or Zellij panes |
 | **[Session Management](docs/session-management.md)** | Reuse recent child-agent sessions with short aliases instead of starting over |
