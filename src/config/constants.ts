@@ -53,14 +53,15 @@ export const SUBAGENT_DELEGATION_RULES: Record<AgentName, readonly string[]> = {
 };
 
 // Default models for each agent
-// orchestrator prioritizes classification/routing over deep analysis;
-// V4 Pro at medium variant improves instruction-following while
-// preserving quota headroom. Real analysis remains delegated to @oracle.
+// Hybrid NeuralWatt + OpenCode-Go strategy:
+// - Orchestrator on NeuralWatt GLM-5.1 (energy-efficient, strong routing)
+// - Explorer on NeuralWatt Qwen3.5-397B-Fast (cheap MoE, tool-calling, no reasoning overhead)
+// - Oracle, Librarian, Designer, Fixer on OpenCode-Go (proven reliability)
 export const DEFAULT_MODELS: Record<AgentName, string | undefined> = {
-  orchestrator: 'opencode-go/deepseek-v4-pro',
+  orchestrator: 'neuralwatt/zai-org/GLM-5.1-FP8',
   oracle: 'opencode-go/deepseek-v4-flash',
-  librarian: 'opencode-go/qwen-3.6-plus',
-  explorer: 'opencode-go/qwen-3.6-plus',
+  librarian: 'opencode-go/deepseek-v4-flash',
+  explorer: 'neuralwatt/qwen3.5-397b-fast',
   designer: 'opencode-go/mimo-v2.5-pro',
   fixer: 'opencode-go/deepseek-v4-flash',
 };
