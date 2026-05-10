@@ -78,7 +78,7 @@ src/index.ts
 - `constants.ts`
   - names/aliases, orchestratable lists, default models/timeouts/modes.
 - `agent-mcps.ts`
-  - `getAgentMcpList`, `parseList`, `getAvailableMcpNames`.
+  - `getAgentMcpList`, `parseList`.
 - `utils.ts`
   - alias resolution and custom-agent key discovery.
 - `loader.ts`
