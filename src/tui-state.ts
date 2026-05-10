@@ -31,6 +31,18 @@ export interface SessionNode {
   finishedAt?: number;
 }
 
+export interface SessionUsageEntry {
+  contextUsed: number;
+  contextLimit: number;
+  contextPct: number;
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+  updatedAt: number;
+}
+
 export interface TuiSnapshot {
   version: 1;
   updatedAt: number;
@@ -44,6 +56,7 @@ export interface TuiSnapshot {
   sessionFinished: Record<string, SessionFinish>;
   sessionTree: Record<string, SessionNode>;
   sessionStatuses: Record<string, string>;
+  sessionUsage: Record<string, SessionUsageEntry>;
   /** Subscription usage entries keyed by provider + account name. */
   subscriptionUsage: Record<string, SubscriptionUsageEntry>;
   /** Active account name by provider. */
@@ -83,6 +96,7 @@ function emptySnapshot(): TuiSnapshot {
     sessionFinished: {},
     sessionTree: {},
     sessionStatuses: {},
+    sessionUsage: {},
     subscriptionUsage: {},
     activeSubscriptionByProvider: {},
   };
@@ -92,6 +106,42 @@ function normalizeSubscriptionUsage(
   usage: Record<string, SubscriptionUsageEntry>,
 ): Record<string, SubscriptionUsageEntry> {
   return usage;
+}
+
+function normalizeSessionUsage(
+  usage: Record<string, Partial<SessionUsageEntry>>,
+): Record<string, SessionUsageEntry> {
+  const result: Record<string, SessionUsageEntry> = {};
+  for (const [sessionID, entry] of Object.entries(usage)) {
+    if (!entry) continue;
+    result[sessionID] = {
+      contextUsed:
+        typeof entry.contextUsed === 'number'
+          ? Math.max(0, entry.contextUsed)
+          : 0,
+      contextLimit:
+        typeof entry.contextLimit === 'number'
+          ? Math.max(0, entry.contextLimit)
+          : 0,
+      contextPct:
+        typeof entry.contextPct === 'number'
+          ? Math.max(0, Math.min(100, entry.contextPct))
+          : 0,
+      input: typeof entry.input === 'number' ? Math.max(0, entry.input) : 0,
+      output: typeof entry.output === 'number' ? Math.max(0, entry.output) : 0,
+      reasoning:
+        typeof entry.reasoning === 'number' ? Math.max(0, entry.reasoning) : 0,
+      cacheRead:
+        typeof entry.cacheRead === 'number' ? Math.max(0, entry.cacheRead) : 0,
+      cacheWrite:
+        typeof entry.cacheWrite === 'number'
+          ? Math.max(0, entry.cacheWrite)
+          : 0,
+      updatedAt:
+        typeof entry.updatedAt === 'number' ? Math.max(0, entry.updatedAt) : 0,
+    };
+  }
+  return result;
 }
 
 function parseSnapshot(value: string): TuiSnapshot | null {
@@ -127,6 +177,7 @@ function parseSnapshot(value: string): TuiSnapshot | null {
     sessionFinished: parsed.sessionFinished ?? {},
     sessionTree: parsed.sessionTree ?? {},
     sessionStatuses: parsed.sessionStatuses ?? {},
+    sessionUsage: normalizeSessionUsage(parsed.sessionUsage ?? {}),
     subscriptionUsage: normalizeSubscriptionUsage(
       parsed.subscriptionUsage ?? {},
     ),
@@ -162,7 +213,9 @@ export function readTuiSnapshot(): TuiSnapshot {
 
 export async function readTuiSnapshotAsync(): Promise<TuiSnapshot> {
   try {
-    const parsed = parseSnapshot(await fs.promises.readFile(getTuiStatePath(), 'utf8'));
+    const parsed = parseSnapshot(
+      await fs.promises.readFile(getTuiStatePath(), 'utf8'),
+    );
     return parsed ?? emptySnapshot();
   } catch {
     return emptySnapshot();
@@ -327,6 +380,32 @@ export function recordSessionDone(sessionID: string): void {
       storeNode.status = 'idle';
       storeNode.finishedAt = Date.now();
     }
+  });
+}
+
+export function recordSessionUsage(input: {
+  sessionID: string;
+  contextUsed: number;
+  contextLimit: number;
+  contextPct: number;
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+}): void {
+  updateSnapshot((snapshot) => {
+    snapshot.sessionUsage[input.sessionID] = {
+      contextUsed: Math.max(0, input.contextUsed),
+      contextLimit: Math.max(0, input.contextLimit),
+      contextPct: Math.max(0, Math.min(100, input.contextPct)),
+      input: Math.max(0, input.input),
+      output: Math.max(0, input.output),
+      reasoning: Math.max(0, input.reasoning),
+      cacheRead: Math.max(0, input.cacheRead),
+      cacheWrite: Math.max(0, input.cacheWrite),
+      updatedAt: Date.now(),
+    };
   });
 }
 

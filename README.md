@@ -38,9 +38,11 @@ bunx oh-my-opencode-slim@latest install
 ```
 
 The installer also registers the companion TUI plugin in OpenCode's
-`tui.json`, which adds a small sidebar showing specialist-agent status plus
-active/reusable task sessions. For manual setups, add `oh-my-opencode-slim` to
-the `plugin` array in both `opencode.json` and `tui.json`.
+`tui.json`, which adds a small sidebar showing specialist-agent status,
+active/reusable task sessions, and orchestrating context telemetry (`ctx`,
+input/output, cache read/write) per visible session entry. For manual setups,
+add `oh-my-opencode-slim` to the `plugin` array in both `opencode.json` and
+`tui.json`.
 
 ### Getting Started
 

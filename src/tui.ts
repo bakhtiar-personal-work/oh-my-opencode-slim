@@ -60,9 +60,107 @@ function truncate(value: string, max = 24): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
+export function formatTokenAbbrev(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  if (value < 1000) return Math.round(value).toString();
+  if (value < 1_000_000) {
+    const k = Math.round(value / 1000);
+    if (k >= 1000) return `${Math.round(value / 1_000_000)}M`;
+    return `${k}K`;
+  }
+  return `${Math.round(value / 1_000_000)}M`;
+}
+
+function formatTokenExact(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  return new Intl.NumberFormat('en-US').format(Math.round(value));
+}
+
 export function formatSidebarModelName(model: string): string {
   const lastSlash = model.lastIndexOf('/');
   return lastSlash === -1 ? model : model.slice(lastSlash + 1);
+}
+
+export function formatSessionUsageRows(
+  snapshot: TuiSnapshot,
+  sessionID: string,
+  options?: { abbreviateLeft?: boolean },
+): {
+  contextPct: number;
+  ctxLabel: string;
+  ctxValue: string;
+  ioInputAbbrev: string;
+  ioOutputAbbrev: string;
+  cacheLabel: string;
+  cacheValue: string;
+  cacheReadAbbrev: string;
+  cacheWriteAbbrev: string;
+} {
+  const abbreviateLeft = options?.abbreviateLeft ?? false;
+  const usage = snapshot.sessionUsage?.[sessionID];
+  const contextUsed = usage?.contextUsed ?? 0;
+  const contextPct = Math.round(usage?.contextPct ?? 0);
+  const inputTotal = (usage?.input ?? 0) + (usage?.cacheRead ?? 0);
+  const outputTotal = (usage?.output ?? 0) + (usage?.reasoning ?? 0);
+  const cacheRead = usage?.cacheRead ?? 0;
+  const cacheWrite = usage?.cacheWrite ?? 0;
+  const cacheTotal = cacheRead + cacheWrite;
+
+  return {
+    contextPct,
+    ctxLabel: 'CTX',
+    ctxValue: `${abbreviateLeft ? formatTokenAbbrev(contextUsed) : formatTokenExact(contextUsed)} (${contextPct}%)`,
+    ioInputAbbrev: formatTokenAbbrev(inputTotal),
+    ioOutputAbbrev: formatTokenAbbrev(outputTotal),
+    cacheLabel: 'CACHE',
+    cacheValue: abbreviateLeft
+      ? formatTokenAbbrev(cacheTotal)
+      : formatTokenExact(cacheTotal),
+    cacheReadAbbrev: formatTokenAbbrev(cacheRead),
+    cacheWriteAbbrev: formatTokenAbbrev(cacheWrite),
+  };
+}
+
+export function aggregateOrchestrationUsage(
+  snapshot: TuiSnapshot,
+  rootSessionID: string,
+): {
+  inputTotal: number;
+  outputTotal: number;
+  cacheRead: number;
+  cacheWrite: number;
+} {
+  const tree = snapshot.sessionTree ?? {};
+  const usageBySession = snapshot.sessionUsage ?? {};
+  const visited = new Set<string>();
+  const queue: string[] = [rootSessionID];
+
+  let inputTotal = 0;
+  let outputTotal = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+
+  while (queue.length > 0) {
+    const sessionID = queue.shift();
+    if (!sessionID || visited.has(sessionID)) continue;
+    visited.add(sessionID);
+
+    const usage = usageBySession[sessionID];
+    if (usage) {
+      inputTotal += usage.input + usage.cacheRead;
+      outputTotal += usage.output + usage.reasoning;
+      cacheRead += usage.cacheRead;
+      cacheWrite += usage.cacheWrite;
+    }
+
+    for (const [childID, childNode] of Object.entries(tree)) {
+      if (childNode.parentId === sessionID && !visited.has(childID)) {
+        queue.push(childID);
+      }
+    }
+  }
+
+  return { inputTotal, outputTotal, cacheRead, cacheWrite };
 }
 
 export function getSidebarAgentNames(snapshot: TuiSnapshot): string[] {
@@ -92,6 +190,30 @@ function formatUsageTime(iso: string): string {
 }
 
 const BAR_WIDTH = 18;
+const SIGMA_TOTAL_COLOR = '#F5B041';
+
+/** Gap between the two compact metrics on the right (icon+value each). */
+const METRIC_PAIR_GAP = ' ';
+
+type MetricPairTheme = {
+  leftFg: unknown;
+  rightFg: unknown;
+  gapFg: unknown;
+};
+
+function renderMetricPairRight(
+  leftIcon: string,
+  leftValue: string,
+  rightIcon: string,
+  rightValue: string,
+  colors: MetricPairTheme,
+): Child {
+  return box({ flexDirection: 'row', flexShrink: 0 }, [
+    text({ fg: colors.leftFg }, [`${leftIcon} ${leftValue}`]),
+    text({ fg: colors.gapFg }, [METRIC_PAIR_GAP]),
+    text({ fg: colors.rightFg }, [`${rightIcon} ${rightValue}`]),
+  ]);
+}
 
 function renderUsageBar(percent: number): string {
   const filled = Math.round((percent / 100) * BAR_WIDTH);
@@ -403,6 +525,19 @@ function getSpinnerChar(now: number): string {
   return SPINNER_FRAMES[Math.floor(now / 80) % SPINNER_FRAMES.length];
 }
 
+function getStatusColor(
+  status: string,
+  theme: {
+    text: unknown;
+    textMuted: unknown;
+    accent: unknown;
+  },
+): unknown {
+  if (status === 'busy' || status === 'retry') return theme.accent;
+  if (status === 'idle') return theme.textMuted;
+  return theme.text;
+}
+
 interface SessionEntry {
   sessionID: string;
   agentName: string;
@@ -417,6 +552,138 @@ function buildOrchestratingRows(
 ): [string, ...Child[]] {
   const tree = snapshot.sessionTree;
   const spinner = getSpinnerChar(now);
+  const isVisibleSession = (node: SessionNode): boolean => {
+    if (node.status === 'busy' || node.status === 'retry') return true;
+    if (node.status !== 'idle' || !node.finishedAt) return false;
+    return now - node.finishedAt < FLASH_DURATION_MS + 1000;
+  };
+  const getVisibleChildren = (parentID: string): Array<[string, SessionNode]> =>
+    Object.entries(tree).filter(
+      ([, child]) => child.parentId === parentID && isVisibleSession(child),
+    );
+  const pushUsageRows = (
+    rows: Child[],
+    sessionID: string,
+    prefix: string,
+    abbreviateLeft: boolean,
+  ): void => {
+    const metrics = formatSessionUsageRows(snapshot, sessionID, {
+      abbreviateLeft,
+    });
+    rows.push(
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          box({ flexDirection: 'row', flexShrink: 1 }, [
+            text({ fg: theme.accent }, [`${prefix}${metrics.ctxLabel} `]),
+            text({ fg: theme.text }, [metrics.ctxValue]),
+          ]),
+          renderMetricPairRight(
+            '🔽',
+            metrics.ioInputAbbrev,
+            '🔼',
+            metrics.ioOutputAbbrev,
+            {
+              leftFg: '#5DADE2',
+              rightFg: '#58D68D',
+              gapFg: theme.textMuted,
+            },
+          ),
+        ],
+      ),
+    );
+    rows.push(
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          box({ flexDirection: 'row', flexShrink: 1 }, [
+            text({ fg: theme.accent }, [`${prefix}${metrics.cacheLabel} `]),
+            text({ fg: theme.text }, [metrics.cacheValue]),
+          ]),
+          renderMetricPairRight(
+            '📖',
+            metrics.cacheReadAbbrev,
+            '📝',
+            metrics.cacheWriteAbbrev,
+            {
+              leftFg: '#5DADE2',
+              rightFg: '#AF7AC5',
+              gapFg: theme.textMuted,
+            },
+          ),
+        ],
+      ),
+    );
+  };
+  const pushAggregateRows = (
+    rows: Child[],
+    sessionID: string,
+    prefix: string,
+  ): void => {
+    const totals = aggregateOrchestrationUsage(snapshot, sessionID);
+    const totalIo = totals.inputTotal + totals.outputTotal;
+    const totalCache = totals.cacheRead + totals.cacheWrite;
+    rows.push(
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          box({ flexDirection: 'row', flexShrink: 1 }, [
+            text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ TOTAL `]),
+            text({ fg: theme.text }, [formatTokenExact(totalIo)]),
+          ]),
+          renderMetricPairRight(
+            '🔽',
+            formatTokenAbbrev(totals.inputTotal),
+            '🔼',
+            formatTokenAbbrev(totals.outputTotal),
+            {
+              leftFg: '#5DADE2',
+              rightFg: '#58D68D',
+              gapFg: theme.textMuted,
+            },
+          ),
+        ],
+      ),
+    );
+    rows.push(
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          box({ flexDirection: 'row', flexShrink: 1 }, [
+            text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ CACHE `]),
+            text({ fg: theme.text }, [formatTokenExact(totalCache)]),
+          ]),
+          renderMetricPairRight(
+            '📖',
+            formatTokenAbbrev(totals.cacheRead),
+            '📝',
+            formatTokenAbbrev(totals.cacheWrite),
+            {
+              leftFg: '#5DADE2',
+              rightFg: '#AF7AC5',
+              gapFg: theme.textMuted,
+            },
+          ),
+        ],
+      ),
+    );
+  };
 
   // Collect visible orchestrator sessions (running + flashing done)
   const visibleOrchSessions: Array<[string, SessionNode]> = [];
@@ -427,15 +694,7 @@ function buildOrchestratingRows(
       visibleOrchSessions.push([id, node]);
     } else if (node.status === 'idle') {
       // Check if any children are still visible (running or flashing)
-      const hasVisibleChildren = Object.entries(tree).some(
-        ([_cid, cnode]) =>
-          cnode.parentId === id &&
-          (cnode.status === 'busy' ||
-            cnode.status === 'retry' ||
-            (cnode.status === 'idle' &&
-              cnode.finishedAt &&
-              now - cnode.finishedAt < FLASH_DURATION_MS + 1000)),
-      );
+      const hasVisibleChildren = getVisibleChildren(id).length > 0;
       if (hasVisibleChildren) {
         // Children still active - keep orchestrator visible (will show spinner)
         visibleOrchSessions.push([id, node]);
@@ -463,24 +722,65 @@ function buildOrchestratingRows(
 
   const rows: Child[] = [];
 
+  const renderChildren = (parentID: string, indentPrefix: string): void => {
+    const visibleChildren = getVisibleChildren(parentID);
+    for (let i = 0; i < visibleChildren.length; i++) {
+      const [childId, child] = visibleChildren[i];
+      const isLast = i === visibleChildren.length - 1;
+      const branchChar = isLast ? '└' : '├';
+      const pipeChar = isLast ? ' ' : '│';
+      const childModel = child.model ? formatSidebarModelName(child.model) : '';
+
+      const childFlash =
+        child.status === 'idle' &&
+        child.finishedAt &&
+        Math.floor((now - child.finishedAt) / 200) % 2 === 0;
+      const indicator =
+        child.status === 'busy' || child.status === 'retry'
+          ? spinner
+          : childFlash
+            ? '·'
+            : ' ';
+      const childStatusText = getStatusText(snapshot, childId);
+      const childVariant =
+        child.variant ?? snapshot.agentDetails?.[child.agent]?.variant;
+      const detailPrefix = `${indentPrefix}${pipeChar}    `;
+
+      rows.push(
+        box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+          },
+          [
+            text({ fg: theme.text }, [
+              `${indentPrefix}${branchChar}─ ${indicator} ${child.agent}`,
+            ]),
+            text({ fg: getStatusColor(childStatusText, theme) }, [
+              childStatusText,
+            ]),
+          ],
+        ),
+      );
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.text }, [
+            `${detailPrefix}${childModel}${childVariant ? ` - ${childVariant}` : ''}`,
+          ]),
+        ]),
+      );
+      pushUsageRows(rows, childId, detailPrefix, true);
+
+      renderChildren(childId, `${indentPrefix}${pipeChar}  `);
+    }
+  };
+
   for (const [orchId, orchNode] of visibleOrchSessions) {
     const modelStr = orchNode.model
       ? formatSidebarModelName(orchNode.model)
       : '';
-
-    // Find children by parentId (robust: doesn't depend on childIds array)
-    const visibleChildren: Array<{ childId: string; child: SessionNode }> = [];
-    for (const [childId, child] of Object.entries(tree)) {
-      if (child.parentId !== orchId) continue;
-      if (child.status === 'busy' || child.status === 'retry') {
-        visibleChildren.push({ childId, child });
-      } else if (child.status === 'idle' && child.finishedAt) {
-        const elapsed = now - child.finishedAt;
-        if (elapsed < FLASH_DURATION_MS + 1000) {
-          visibleChildren.push({ childId, child });
-        }
-      }
-    }
+    const visibleChildren = getVisibleChildren(orchId);
 
     // Orchestrator dot: spinner while busy or while idle but children still
     // visible; flash dot only when idle AND all children have cleared.
@@ -513,60 +813,16 @@ function buildOrchestratingRows(
           justifyContent: 'space-between',
         },
         [
-          text({ fg: theme.textMuted }, [
+          text({ fg: theme.text }, [
             `  ${modelStr}${orchVariant ? ` - ${orchVariant}` : ''}`,
           ]),
-          text({ fg: theme.textMuted }, [orchStatusText]),
+          text({ fg: getStatusColor(orchStatusText, theme) }, [orchStatusText]),
         ],
       ),
     );
-
-    // Children
-    for (let i = 0; i < visibleChildren.length; i++) {
-      const { childId, child } = visibleChildren[i];
-      const isLast = i === visibleChildren.length - 1;
-      const branchChar = isLast ? '└' : '├';
-      const pipeChar = isLast ? ' ' : '│';
-      const childModel = child.model ? formatSidebarModelName(child.model) : '';
-
-      // Flash dot for idle (completed) children
-      const childFlash =
-        child.status === 'idle' &&
-        child.finishedAt &&
-        Math.floor((now - child.finishedAt) / 200) % 2 === 0;
-      const indicator =
-        child.status === 'busy' || child.status === 'retry'
-          ? spinner
-          : childFlash
-            ? '·'
-            : ' ';
-
-      const childStatusText = getStatusText(snapshot, childId);
-      rows.push(
-        box(
-          {
-            width: '100%',
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-          },
-          [
-            text({ fg: theme.text }, [
-              `  ${branchChar}─ ${indicator} ${child.agent}`,
-            ]),
-            text({ fg: theme.textMuted }, [childStatusText]),
-          ],
-        ),
-      );
-      const childVariant =
-        child.variant ?? snapshot.agentDetails?.[child.agent]?.variant;
-      rows.push(
-        box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.textMuted }, [
-            `${`  ${pipeChar}`.padEnd(7)}${childModel}${childVariant ? ` - ${childVariant}` : ''}`,
-          ]),
-        ]),
-      );
-    }
+    pushUsageRows(rows, orchId, '  ', false);
+    pushAggregateRows(rows, orchId, '  ');
+    renderChildren(orchId, '  ');
 
     rows.push(box({ width: '100%', height: 1 }));
   }
@@ -857,64 +1113,64 @@ function renderSidebar(
       ...agentRows,
       ...(orchestratingRows.length > 0
         ? [
-            box({ width: '100%', height: 1 }),
-            box(
-              {
-                width: '100%',
-                flexDirection: 'column',
-                border: BORDER,
-                borderColor: theme.borderActive,
-                paddingTop: 0,
-                paddingBottom: 0,
-                paddingLeft: 0,
-                paddingRight: 0,
-              },
-              [
-                box(
-                  {
-                    width: '100%',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                  },
-                  [
-                    text({ fg: theme.text }, ['Orchestrating']),
-                    text({ fg: theme.textMuted }, [
-                      `[${orchestratingRows[0] as string}]`,
-                    ]),
-                  ],
-                ),
-                ...(orchestratingRows.slice(1) as Child[]),
-              ],
-            ),
-          ]
+          box({ width: '100%', height: 1 }),
+          box(
+            {
+              width: '100%',
+              flexDirection: 'column',
+              border: BORDER,
+              borderColor: theme.borderActive,
+              paddingTop: 0,
+              paddingBottom: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+            },
+            [
+              box(
+                {
+                  width: '100%',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                },
+                [
+                  text({ fg: theme.text }, ['Orchestrating']),
+                  text({ fg: theme.textMuted }, [
+                    `[${orchestratingRows[0] as string}]`,
+                  ]),
+                ],
+              ),
+              ...(orchestratingRows.slice(1) as Child[]),
+            ],
+          ),
+        ]
         : []),
       ...(usageRows.length > 0
         ? [
-            box({ width: '100%', height: 1 }),
-            box(
-              {
-                width: '100%',
-                flexDirection: 'column',
-                border: BORDER,
-                borderColor: theme.borderActive,
-                paddingTop: 0,
-                paddingBottom: 0,
-                paddingLeft: 0,
-                paddingRight: 0,
-              },
-              [
-                box(
-                  {
-                    width: '100%',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                  },
-                  [text({ fg: theme.text }, ['API Usage'])],
-                ),
-                ...(usageRows as Child[]),
-              ],
-            ),
-          ]
+          box({ width: '100%', height: 1 }),
+          box(
+            {
+              width: '100%',
+              flexDirection: 'column',
+              border: BORDER,
+              borderColor: theme.borderActive,
+              paddingTop: 0,
+              paddingBottom: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+            },
+            [
+              box(
+                {
+                  width: '100%',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                },
+                [text({ fg: theme.text }, ['API Usage'])],
+              ),
+              ...(usageRows as Child[]),
+            ],
+          ),
+        ]
         : []),
     ],
   );

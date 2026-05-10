@@ -54,6 +54,7 @@ import {
   recordSessionModel,
   recordSessionNode,
   recordSessionStart,
+  recordSessionUsage,
   recordSessionVariant,
   recordTuiAgentModels,
   sessionTreeStore,
@@ -96,6 +97,65 @@ const HEALTH_CHECK = {
   minTools: 5,
   minMcps: 1,
 } as const;
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readTokenTelemetry(message: unknown): {
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+  contextLimit: number;
+} | null {
+  const msg = message as {
+    info?: {
+      role?: string;
+      tokens?: {
+        input?: unknown;
+        output?: unknown;
+        reasoning?: unknown;
+        cache?: { read?: unknown; write?: unknown };
+      };
+      model?: {
+        limit?: { context?: unknown; input?: unknown };
+      };
+    };
+  };
+  if (msg.info?.role !== 'assistant') return null;
+
+  const input = asNumber(msg.info?.tokens?.input) ?? 0;
+  const output = asNumber(msg.info?.tokens?.output) ?? 0;
+  const reasoning = asNumber(msg.info?.tokens?.reasoning) ?? 0;
+  const cacheRead = asNumber(msg.info?.tokens?.cache?.read) ?? 0;
+  const cacheWrite = asNumber(msg.info?.tokens?.cache?.write) ?? 0;
+
+  const contextLimit =
+    asNumber(msg.info?.model?.limit?.context) ??
+    asNumber(msg.info?.model?.limit?.input) ??
+    0;
+
+  if (
+    input <= 0 &&
+    output <= 0 &&
+    reasoning <= 0 &&
+    cacheRead <= 0 &&
+    cacheWrite <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    input,
+    output,
+    reasoning,
+    cacheRead,
+    cacheWrite,
+    contextLimit,
+  };
+}
 
 /**
  * Probe jsdom at init time so the first webfetch call doesn't fail
@@ -873,6 +933,65 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
                 model: `${info.providerID}/${info.modelID}`,
               });
             }
+          }
+        }
+
+        const sessionID = info?.sessionID ?? event.properties?.sessionID;
+        if (sessionID) {
+          try {
+            const messageID =
+              typeof info?.id === 'string' ? info.id : undefined;
+            let telemetrySource: unknown | null = null;
+
+            if (messageID) {
+              const messageResult = await ctx.client.session.message({
+                path: { id: sessionID, messageID },
+              });
+              telemetrySource = messageResult.data ?? null;
+            }
+
+            if (!readTokenTelemetry(telemetrySource)) {
+              const messagesResult = await ctx.client.session.messages({
+                path: { id: sessionID },
+              });
+              const messages = Array.isArray(messagesResult.data)
+                ? [...messagesResult.data]
+                : [];
+              telemetrySource =
+                messages.reverse().find((message) => {
+                  const role = (message as { info?: { role?: string } }).info
+                    ?.role;
+                  return role === 'assistant';
+                }) ?? null;
+            }
+
+            const telemetry = readTokenTelemetry(telemetrySource);
+            if (telemetry) {
+              const contextUsed =
+                telemetry.input +
+                telemetry.output +
+                telemetry.reasoning +
+                telemetry.cacheRead +
+                telemetry.cacheWrite;
+              const contextPct =
+                telemetry.contextLimit > 0
+                  ? (contextUsed / telemetry.contextLimit) * 100
+                  : 0;
+
+              recordSessionUsage({
+                sessionID,
+                contextUsed,
+                contextLimit: telemetry.contextLimit,
+                contextPct,
+                input: telemetry.input,
+                output: telemetry.output,
+                reasoning: telemetry.reasoning,
+                cacheRead: telemetry.cacheRead,
+                cacheWrite: telemetry.cacheWrite,
+              });
+            }
+          } catch {
+            // Usage telemetry is best-effort for sidebar display.
           }
         }
       }

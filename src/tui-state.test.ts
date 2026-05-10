@@ -6,6 +6,7 @@ import {
   getTuiStatePath,
   readTuiSnapshot,
   recordActiveSubscriptionForProvider,
+  recordSessionUsage,
   recordSubscriptionUsage,
   recordTuiAgentModel,
   recordTuiAgentModels,
@@ -244,6 +245,33 @@ describe('activeSubscriptionByProvider', () => {
     expect(readTuiSnapshot().activeSubscriptionByProvider['opencode-go']).toBe(
       'personal',
     );
+  });
+});
+
+describe('sessionUsage', () => {
+  test('recordSessionUsage persists token telemetry per session', () => {
+    recordSessionUsage({
+      sessionID: 'session-123',
+      contextUsed: 150_000,
+      contextLimit: 400_000,
+      contextPct: 37.5,
+      input: 8_000,
+      output: 900,
+      reasoning: 200,
+      cacheRead: 2_500,
+      cacheWrite: 700,
+    });
+
+    const usage = readTuiSnapshot().sessionUsage['session-123'];
+    expect(usage).toBeDefined();
+    expect(usage?.contextUsed).toBe(150_000);
+    expect(usage?.contextLimit).toBe(400_000);
+    expect(usage?.contextPct).toBe(37.5);
+    expect(usage?.input).toBe(8_000);
+    expect(usage?.output).toBe(900);
+    expect(usage?.reasoning).toBe(200);
+    expect(usage?.cacheRead).toBe(2_500);
+    expect(usage?.cacheWrite).toBe(700);
   });
 });
 
