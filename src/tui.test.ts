@@ -14,6 +14,10 @@ function createSnapshot(agentModels: TuiSnapshot['agentModels']): TuiSnapshot {
     sessionModels: {},
     sessionVariants: {},
     sessionFinished: {},
+    sessionTree: {},
+    sessionStatuses: {},
+    subscriptionUsage: {},
+    activeSubscriptionByProvider: {},
   };
 }
 

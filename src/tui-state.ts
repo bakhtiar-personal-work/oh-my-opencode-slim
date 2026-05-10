@@ -1,9 +1,12 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { OpenCodeGoUsageEntry } from './opencode-go/types';
+import type {
+  SubscriptionProvider,
+  SubscriptionUsageEntry,
+} from './subscriptions/types';
 
-export type { OpenCodeGoUsageEntry };
+export type { SubscriptionUsageEntry };
 
 export interface AgentDetail {
   description: string;
@@ -41,9 +44,10 @@ export interface TuiSnapshot {
   sessionFinished: Record<string, SessionFinish>;
   sessionTree: Record<string, SessionNode>;
   sessionStatuses: Record<string, string>;
-  opencodeGoUsage: Record<string, OpenCodeGoUsageEntry>;
-  /** Name of the currently active OpenCode Go account (for provider key switching). */
-  activeOpenCodeGoAccount: string | null;
+  /** Subscription usage entries keyed by provider + account name. */
+  subscriptionUsage: Record<string, SubscriptionUsageEntry>;
+  /** Active account name by provider. */
+  activeSubscriptionByProvider: Partial<Record<SubscriptionProvider, string>>;
 }
 
 /** In-memory session tree store — shared between main plugin and TUI.
@@ -79,14 +83,32 @@ function emptySnapshot(): TuiSnapshot {
     sessionFinished: {},
     sessionTree: {},
     sessionStatuses: {},
-    opencodeGoUsage: {},
-    activeOpenCodeGoAccount: null,
+    subscriptionUsage: {},
+    activeSubscriptionByProvider: {},
   };
 }
 
-function parseSnapshot(value: string): TuiSnapshot {
+function normalizeSubscriptionUsage(
+  usage: Record<string, SubscriptionUsageEntry>,
+): Record<string, SubscriptionUsageEntry> {
+  return usage;
+}
+
+function parseSnapshot(value: string): TuiSnapshot | null {
   const parsed = JSON.parse(value) as Partial<TuiSnapshot> | undefined;
-  if (parsed?.version !== 1) return emptySnapshot();
+  if (parsed?.version !== 1) return null;
+
+  const activeSubscriptionByProvider: Partial<
+    Record<SubscriptionProvider, string>
+  > = {};
+  if (parsed.activeSubscriptionByProvider) {
+    for (const provider of ['opencode-go', 'neuralwatt'] as const) {
+      const value = parsed.activeSubscriptionByProvider[provider];
+      if (typeof value === 'string' && value.length > 0) {
+        activeSubscriptionByProvider[provider] = value;
+      }
+    }
+  }
 
   return {
     version: 1,
@@ -105,25 +127,43 @@ function parseSnapshot(value: string): TuiSnapshot {
     sessionFinished: parsed.sessionFinished ?? {},
     sessionTree: parsed.sessionTree ?? {},
     sessionStatuses: parsed.sessionStatuses ?? {},
-    opencodeGoUsage: parsed.opencodeGoUsage ?? {},
-    activeOpenCodeGoAccount:
-      typeof parsed.activeOpenCodeGoAccount === 'string'
-        ? parsed.activeOpenCodeGoAccount
-        : null,
+    subscriptionUsage: normalizeSubscriptionUsage(
+      parsed.subscriptionUsage ?? {},
+    ),
+    activeSubscriptionByProvider,
   };
 }
 
-export function readTuiSnapshot(): TuiSnapshot {
+function tryReadSnapshot(): {
+  snapshot: TuiSnapshot;
+  okForMutation: boolean;
+} {
+  const filePath = getTuiStatePath();
   try {
-    return parseSnapshot(fs.readFileSync(getTuiStatePath(), 'utf8'));
-  } catch {
-    return emptySnapshot();
+    const parsed = parseSnapshot(fs.readFileSync(filePath, 'utf8'));
+    if (parsed) {
+      return { snapshot: parsed, okForMutation: true };
+    }
+    // Preserve existing file on schema/version mismatch.
+    return { snapshot: emptySnapshot(), okForMutation: false };
+  } catch (error) {
+    // Missing file is expected on first run; allow initialization.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { snapshot: emptySnapshot(), okForMutation: true };
+    }
+    // For parse/read errors, avoid clobbering existing state.
+    return { snapshot: emptySnapshot(), okForMutation: false };
   }
+}
+
+export function readTuiSnapshot(): TuiSnapshot {
+  return tryReadSnapshot().snapshot;
 }
 
 export async function readTuiSnapshotAsync(): Promise<TuiSnapshot> {
   try {
-    return parseSnapshot(await fs.promises.readFile(getTuiStatePath(), 'utf8'));
+    const parsed = parseSnapshot(await fs.promises.readFile(getTuiStatePath(), 'utf8'));
+    return parsed ?? emptySnapshot();
   } catch {
     return emptySnapshot();
   }
@@ -140,7 +180,8 @@ function writeTuiSnapshot(snapshot: TuiSnapshot): void {
 }
 
 export function updateSnapshot(mutator: (snapshot: TuiSnapshot) => void): void {
-  const snapshot = readTuiSnapshot();
+  const { snapshot, okForMutation } = tryReadSnapshot();
+  if (!okForMutation) return;
   mutator(snapshot);
   snapshot.updatedAt = Date.now();
   writeTuiSnapshot(snapshot);
@@ -289,29 +330,54 @@ export function recordSessionDone(sessionID: string): void {
   });
 }
 
-export function recordOpencodeGoUsage(usage: OpenCodeGoUsageEntry[]): void {
+export function subscriptionUsageKey(
+  provider: SubscriptionProvider,
+  accountName: string,
+): string {
+  return `${provider}\u0000${accountName}`;
+}
+
+/**
+ * Record subscription usage entries (multi-provider).
+ */
+export function recordSubscriptionUsage(usage: SubscriptionUsageEntry[]): void {
   updateSnapshot((snapshot) => {
-    snapshot.opencodeGoUsage = {};
+    snapshot.subscriptionUsage = {};
     for (const entry of usage) {
       if (entry.accountName) {
-        snapshot.opencodeGoUsage[entry.accountName] = entry;
+        snapshot.subscriptionUsage[
+          subscriptionUsageKey(entry.provider, entry.accountName)
+        ] = entry;
       }
     }
   });
 }
 
-export function removeOpencodeGoUsageEntry(name: string): void {
+/**
+ * Remove a subscription usage entry by provider/account name.
+ */
+export function removeSubscriptionUsageEntry(
+  provider: SubscriptionProvider,
+  name: string,
+): void {
   updateSnapshot((snapshot) => {
-    delete snapshot.opencodeGoUsage[name];
+    delete snapshot.subscriptionUsage[subscriptionUsageKey(provider, name)];
   });
 }
 
 /**
- * Record the active OpenCode Go account name for sidebar display.
- * Pass null to clear.
+ * Record the active subscription account by provider.
+ * Pass null to clear for that provider.
  */
-export function recordActiveOpenCodeGoAccount(name: string | null): void {
+export function recordActiveSubscriptionForProvider(
+  provider: SubscriptionProvider,
+  name: string | null,
+): void {
   updateSnapshot((snapshot) => {
-    snapshot.activeOpenCodeGoAccount = name;
+    if (name) {
+      snapshot.activeSubscriptionByProvider[provider] = name;
+    } else {
+      delete snapshot.activeSubscriptionByProvider[provider];
+    }
   });
 }

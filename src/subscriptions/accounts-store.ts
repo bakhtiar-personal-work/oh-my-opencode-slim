@@ -1,31 +1,34 @@
 /**
- * Local file-based storage for OpenCode Go accounts.
+ * Local file-based storage for subscription accounts.
  *
- * Stores account credentials (workspace ID + auth cookie) in a local JSON
- * file alongside tui-state.json, NOT in the plugin config, so auth tokens
- * are never committed to repos or exposed in the published schema.
+ * Stores account credentials in a local JSON file alongside tui-state.json,
+ * NOT in the plugin config, so auth tokens are never committed to repos or
+ * exposed in the published schema.
+ *
+ * Supports multiple providers (OpenCode Go, Neuralwatt) via discriminated
+ * unions on the `provider` field.
+ *
  */
 
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { StoredAccount, SubscriptionProvider } from './types';
 
-export interface StoredAccount {
-  name: string;
-  workspaceId: string;
-  authCookie: string;
-  provider?: string;
-  apiKey?: string;
-}
+// Re-export for consumers
+export type { StoredAccount };
 
 interface AccountsFile {
-  version: 1;
+  version: 2;
   accounts: StoredAccount[];
-  activeAccount: string | null;
 }
 
+export type LoadAccountsResult =
+  | { ok: true; accounts: StoredAccount[] }
+  | { ok: false; accounts: StoredAccount[] };
+
 const STATE_DIR = 'oh-my-opencode-slim';
-const ACCOUNTS_FILE = 'opencode-go-accounts.json';
+const ACCOUNTS_FILE = 'subscriptions.json';
 
 function dataDir(): string {
   return (
@@ -38,34 +41,22 @@ function getAccountsPath(): string {
 }
 
 function emptyFile(): AccountsFile {
-  return { version: 1, accounts: [], activeAccount: null };
+  return { version: 2, accounts: [] };
 }
 
-function parseAccountsFile(value: string): AccountsFile {
+function parseAccountsFile(value: string): AccountsFile | null {
   try {
     const parsed = JSON.parse(value) as Partial<AccountsFile>;
-    if (parsed?.version === 1 && Array.isArray(parsed.accounts)) {
+    if (parsed?.version === 2 && Array.isArray(parsed.accounts)) {
       return {
-        version: 1,
+        version: 2,
         accounts: parsed.accounts,
-        activeAccount:
-          typeof parsed.activeAccount === 'string'
-            ? parsed.activeAccount
-            : null,
       };
     }
   } catch {
-    // Fall through to empty
+    // Fall through to null
   }
-  return emptyFile();
-}
-
-function readAccountsFile(): AccountsFile {
-  try {
-    return parseAccountsFile(fs.readFileSync(getAccountsPath(), 'utf8'));
-  } catch {
-    return emptyFile();
-  }
+  return null;
 }
 
 function writeAccountsFile(file: AccountsFile): void {
@@ -78,11 +69,42 @@ function writeAccountsFile(file: AccountsFile): void {
   }
 }
 
+function loadAccountsResult(): LoadAccountsResult {
+  const accountsPath = getAccountsPath();
+  try {
+    const parsed = parseAccountsFile(fs.readFileSync(accountsPath, 'utf8'));
+    if (!parsed) return { ok: false, accounts: [] };
+    return { ok: true, accounts: parsed.accounts };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { ok: true, accounts: [] };
+    }
+    return { ok: false, accounts: [] };
+  }
+}
+
+function readAccountsFile(): AccountsFile {
+  const result = loadAccountsResult();
+  if (!result.ok) return emptyFile();
+  return { version: 2, accounts: result.accounts };
+}
+
 /**
  * Load all stored accounts.
  */
 export function loadAccounts(): StoredAccount[] {
-  return readAccountsFile().accounts;
+  return loadAccountsResult().accounts;
+}
+
+export { loadAccountsResult };
+
+/**
+ * Load accounts filtered by provider.
+ */
+export function getAccountsByProvider(
+  provider: SubscriptionProvider,
+): StoredAccount[] {
+  return readAccountsFile().accounts.filter((a) => a.provider === provider);
 }
 
 /**
@@ -113,13 +135,13 @@ export function removeAccount(name: string): boolean {
 }
 
 /**
- * Update the auth cookie for an existing account. Returns true if updated,
- * false if account not found.
+ * Update the auth cookie for an existing OpenCode Go account.
+ * Returns true if updated, false if account not found or not an opencode-go account.
  */
 export function updateAccountCookie(name: string, authCookie: string): boolean {
   const file = readAccountsFile();
   const account = file.accounts.find((a) => a.name === name);
-  if (!account) return false;
+  if (!account || account.provider !== 'opencode-go') return false;
   account.authCookie = authCookie;
   writeAccountsFile(file);
   return true;
@@ -155,24 +177,8 @@ export function setAccountKey(
   const file = readAccountsFile();
   const account = file.accounts.find((a) => a.name === name);
   if (!account) return false;
-  account.provider = provider;
+  account.provider = provider as SubscriptionProvider;
   account.apiKey = apiKey;
   writeAccountsFile(file);
   return true;
-}
-
-/**
- * Get the currently active OpenCode Go account name.
- */
-export function getActiveAccount(): string | null {
-  return readAccountsFile().activeAccount ?? null;
-}
-
-/**
- * Set the active OpenCode Go account. Pass null to clear.
- */
-export function setActiveAccount(name: string | null): void {
-  const file = readAccountsFile();
-  file.activeAccount = name;
-  writeAccountsFile(file);
 }

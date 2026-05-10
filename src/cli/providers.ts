@@ -46,7 +46,10 @@ export const MODEL_MAPPINGS = {
     fixer: { model: 'zai-coding-plan/glm-5', variant: 'low' },
   },
   'opencode-go': {
-    orchestrator: { model: 'neuralwatt/zai-org/GLM-5.1-FP8', variant: 'medium' },
+    orchestrator: {
+      model: 'neuralwatt/zai-org/GLM-5.1-FP8',
+      variant: 'medium',
+    },
     oracle: { model: 'opencode-go/deepseek-v4-flash', variant: 'medium' },
     librarian: { model: 'opencode-go/deepseek-v4-flash', variant: 'low' },
     explorer: { model: 'neuralwatt/qwen3.5-397b-fast', variant: 'low' },

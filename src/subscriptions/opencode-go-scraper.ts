@@ -114,6 +114,7 @@ export async function scrapeQuota(
       const text = await response.text();
       const snippet = text.slice(0, 200).replace(/\s+/g, ' ').trim();
       return {
+        provider: 'opencode-go',
         accountName: '',
         workspaceId,
         fetchedAt: now,
@@ -141,6 +142,7 @@ export async function scrapeQuota(
 
     if (!rolling && !weekly && !monthly) {
       return {
+        provider: 'opencode-go',
         accountName: '',
         workspaceId,
         fetchedAt: now,
@@ -151,6 +153,7 @@ export async function scrapeQuota(
     }
 
     return {
+      provider: 'opencode-go',
       accountName: '',
       workspaceId,
       fetchedAt: now,
@@ -161,6 +164,7 @@ export async function scrapeQuota(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
+      provider: 'opencode-go',
       accountName: '',
       workspaceId,
       fetchedAt: now,
@@ -285,7 +289,7 @@ function parseUsageSSR(payload: string): UsageDetail | { error: string } {
   return { totalCalls, totalCost: totalCostDollars, perModel };
 }
 
-function parseUsageHTML(
+function _parseUsageHTML(
   _doc: globalThis.Document,
 ): UsageDetail | { error: string } {
   // The /usage page is client-side rendered and all data is in SSR hydration.

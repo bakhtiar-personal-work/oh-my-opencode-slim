@@ -36,8 +36,8 @@ import {
   MultiplexerSessionManager,
   startAvailabilityCheck,
 } from './multiplexer';
-import type { UsageService } from './opencode-go';
-import { createUsageService } from './opencode-go';
+import type { UsageService } from './subscriptions';
+import { createUsageService } from './subscriptions';
 import {
   ast_grep_replace,
   ast_grep_search,
@@ -403,7 +403,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     interviewManager = createInterviewManager(ctx, config);
     presetManager = createPresetManager(ctx, config);
     usageService = createUsageService(ctx.client);
-    usageService.syncActiveAccount();
+    usageService.syncActiveAccounts();
 
     toolCount =
       Object.keys(delegateTools).length +

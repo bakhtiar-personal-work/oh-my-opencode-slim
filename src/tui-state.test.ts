@@ -3,12 +3,14 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  getTuiStatePath,
   readTuiSnapshot,
-  recordActiveOpenCodeGoAccount,
-  recordOpencodeGoUsage,
+  recordActiveSubscriptionForProvider,
+  recordSubscriptionUsage,
   recordTuiAgentModel,
   recordTuiAgentModels,
-  removeOpencodeGoUsageEntry,
+  removeSubscriptionUsageEntry,
+  subscriptionUsageKey,
 } from './tui-state';
 
 let previousXdgDataHome: string | undefined;
@@ -67,17 +69,55 @@ describe('tui-state persistence', () => {
   });
 });
 
-describe('opencodeGoUsage', () => {
-  test('recordOpencodeGoUsage clears stale entries', () => {
-    // First write two entries
-    recordOpencodeGoUsage([
+describe('subscriptionUsage', () => {
+  test('recordSubscriptionUsage uses provider-scoped keys', () => {
+    recordSubscriptionUsage([
       {
+        provider: 'opencode-go',
+        accountName: 'personal',
+        workspaceId: 'wrk_123',
+        fetchedAt: Date.now(),
+      },
+      {
+        provider: 'neuralwatt',
+        accountName: 'personal',
+        snapshot_at: '',
+        balance: {
+          credits_remaining_usd: 0,
+          total_credits_usd: 0,
+          credits_used_usd: 0,
+          accounting_method: 'energy',
+        },
+        usage: {
+          lifetime: { cost_usd: 0, requests: 0, tokens: 0, energy_kwh: 0 },
+          current_month: { cost_usd: 0, requests: 0, tokens: 0, energy_kwh: 0 },
+        },
+        subscription: null,
+        fetchedAt: Date.now(),
+      },
+    ]);
+
+    const snapshot = readTuiSnapshot();
+    expect(snapshot.subscriptionUsage).toHaveProperty(
+      subscriptionUsageKey('opencode-go', 'personal'),
+    );
+    expect(snapshot.subscriptionUsage).toHaveProperty(
+      subscriptionUsageKey('neuralwatt', 'personal'),
+    );
+  });
+
+  test('recordSubscriptionUsage clears stale entries', () => {
+    // First write two entries
+    recordSubscriptionUsage([
+      {
+        provider: 'opencode-go',
         accountName: 'personal',
         workspaceId: 'wrk_123',
         fetchedAt: Date.now(),
         error: undefined,
       },
       {
+        provider: 'opencode-go',
         accountName: 'work',
         workspaceId: 'wrk_456',
         fetchedAt: Date.now(),
@@ -85,12 +125,17 @@ describe('opencodeGoUsage', () => {
       },
     ]);
 
-    expect(readTuiSnapshot().opencodeGoUsage).toHaveProperty('personal');
-    expect(readTuiSnapshot().opencodeGoUsage).toHaveProperty('work');
+    expect(readTuiSnapshot().subscriptionUsage).toHaveProperty(
+      subscriptionUsageKey('opencode-go', 'personal'),
+    );
+    expect(readTuiSnapshot().subscriptionUsage).toHaveProperty(
+      subscriptionUsageKey('opencode-go', 'work'),
+    );
 
     // Now write only one entry — the other should be gone
-    recordOpencodeGoUsage([
+    recordSubscriptionUsage([
       {
+        provider: 'opencode-go',
         accountName: 'personal',
         workspaceId: 'wrk_123',
         fetchedAt: Date.now(),
@@ -99,35 +144,44 @@ describe('opencodeGoUsage', () => {
     ]);
 
     const snapshot = readTuiSnapshot();
-    expect(snapshot.opencodeGoUsage).toHaveProperty('personal');
-    expect(snapshot.opencodeGoUsage).not.toHaveProperty('work');
+    expect(snapshot.subscriptionUsage).toHaveProperty(
+      subscriptionUsageKey('opencode-go', 'personal'),
+    );
+    expect(snapshot.subscriptionUsage).not.toHaveProperty(
+      subscriptionUsageKey('opencode-go', 'work'),
+    );
   });
 
-  test('recordOpencodeGoUsage handles empty array (clears all)', () => {
-    recordOpencodeGoUsage([
+  test('recordSubscriptionUsage handles empty array (clears all)', () => {
+    recordSubscriptionUsage([
       {
+        provider: 'opencode-go',
         accountName: 'personal',
         workspaceId: 'wrk_123',
         fetchedAt: Date.now(),
         error: undefined,
       },
     ]);
-    expect(readTuiSnapshot().opencodeGoUsage).toHaveProperty('personal');
+    expect(readTuiSnapshot().subscriptionUsage).toHaveProperty(
+      subscriptionUsageKey('opencode-go', 'personal'),
+    );
 
     // Empty array should clear everything
-    recordOpencodeGoUsage([]);
-    expect(readTuiSnapshot().opencodeGoUsage).toEqual({});
+    recordSubscriptionUsage([]);
+    expect(readTuiSnapshot().subscriptionUsage).toEqual({});
   });
 
-  test('removeOpencodeGoUsageEntry deletes a specific entry', () => {
-    recordOpencodeGoUsage([
+  test('removeSubscriptionUsageEntry deletes a specific entry', () => {
+    recordSubscriptionUsage([
       {
+        provider: 'opencode-go',
         accountName: 'personal',
         workspaceId: 'wrk_123',
         fetchedAt: Date.now(),
         error: undefined,
       },
       {
+        provider: 'opencode-go',
         accountName: 'work',
         workspaceId: 'wrk_456',
         fetchedAt: Date.now(),
@@ -135,16 +189,21 @@ describe('opencodeGoUsage', () => {
       },
     ]);
 
-    removeOpencodeGoUsageEntry('personal');
+    removeSubscriptionUsageEntry('opencode-go', 'personal');
 
     const snapshot = readTuiSnapshot();
-    expect(snapshot.opencodeGoUsage).not.toHaveProperty('personal');
-    expect(snapshot.opencodeGoUsage).toHaveProperty('work');
+    expect(snapshot.subscriptionUsage).not.toHaveProperty(
+      subscriptionUsageKey('opencode-go', 'personal'),
+    );
+    expect(snapshot.subscriptionUsage).toHaveProperty(
+      subscriptionUsageKey('opencode-go', 'work'),
+    );
   });
 
-  test('removeOpencodeGoUsageEntry is idempotent for unknown names', () => {
-    recordOpencodeGoUsage([
+  test('removeSubscriptionUsageEntry is idempotent for unknown names', () => {
+    recordSubscriptionUsage([
       {
+        provider: 'opencode-go',
         accountName: 'personal',
         workspaceId: 'wrk_123',
         fetchedAt: Date.now(),
@@ -153,27 +212,49 @@ describe('opencodeGoUsage', () => {
     ]);
 
     // Removing a name that doesn't exist should not throw
-    expect(() => removeOpencodeGoUsageEntry('nonexistent')).not.toThrow();
-    expect(readTuiSnapshot().opencodeGoUsage).toHaveProperty('personal');
+    expect(() =>
+      removeSubscriptionUsageEntry('opencode-go', 'nonexistent'),
+    ).not.toThrow();
+    expect(readTuiSnapshot().subscriptionUsage).toHaveProperty(
+      subscriptionUsageKey('opencode-go', 'personal'),
+    );
   });
 });
 
-describe('activeOpenCodeGoAccount', () => {
-  test('recordActiveOpenCodeGoAccount sets the field', () => {
-    recordActiveOpenCodeGoAccount('personal');
-    expect(readTuiSnapshot().activeOpenCodeGoAccount).toBe('personal');
+describe('activeSubscriptionByProvider', () => {
+  test('recordActiveSubscriptionForProvider sets the field', () => {
+    recordActiveSubscriptionForProvider('opencode-go', 'personal');
+    expect(readTuiSnapshot().activeSubscriptionByProvider['opencode-go']).toBe(
+      'personal',
+    );
   });
 
-  test('recordActiveOpenCodeGoAccount clears with null', () => {
-    recordActiveOpenCodeGoAccount('personal');
-    recordActiveOpenCodeGoAccount(null);
-    expect(readTuiSnapshot().activeOpenCodeGoAccount).toBeNull();
+  test('recordActiveSubscriptionForProvider clears with null', () => {
+    recordActiveSubscriptionForProvider('opencode-go', 'personal');
+    recordActiveSubscriptionForProvider('opencode-go', null);
+    expect(readTuiSnapshot().activeSubscriptionByProvider['opencode-go']).toBe(
+      undefined,
+    );
   });
 
-  test('recordActiveOpenCodeGoAccount survives other snapshot updates', () => {
-    recordActiveOpenCodeGoAccount('personal');
-    // Write some other data — shouldn't affect activeAccount
+  test('recordActiveSubscriptionForProvider survives other snapshot updates', () => {
+    recordActiveSubscriptionForProvider('opencode-go', 'personal');
+    // Write some other data — shouldn't affect active provider selection
     recordTuiAgentModel({ agentName: 'explorer', model: 'test-model' });
-    expect(readTuiSnapshot().activeOpenCodeGoAccount).toBe('personal');
+    expect(readTuiSnapshot().activeSubscriptionByProvider['opencode-go']).toBe(
+      'personal',
+    );
+  });
+});
+
+describe('tui-state file safety', () => {
+  test('does not clobber existing file when state json is malformed', () => {
+    const filePath = getTuiStatePath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, '{ malformed json');
+
+    recordTuiAgentModel({ agentName: 'explorer', model: 'test-model' });
+
+    expect(fs.readFileSync(filePath, 'utf8')).toBe('{ malformed json');
   });
 });

@@ -4,7 +4,8 @@ import { createElement, insert, setProp } from '@opentui/solid';
 import { createSignal } from 'solid-js';
 import { AGENT_SIDEBAR_DESCRIPTIONS } from './agents/descriptions';
 import { SUBAGENT_NAMES } from './config/constants';
-import type { OpenCodeGoUsageEntry } from './tui-state';
+import type { NeuralwattUsageEntry } from './subscriptions/types';
+import type { SubscriptionUsageEntry } from './tui-state';
 import {
   readTuiSnapshot,
   readTuiSnapshotAsync,
@@ -104,74 +105,69 @@ function getUsageColor(percentRemaining: number): string {
   return ''; // empty = use default theme color
 }
 
-function renderUsagePanel(
-  snapshot: TuiSnapshot,
-  theme: {
-    text: unknown;
-    textMuted: unknown;
-    accent: unknown;
-    borderActive: unknown;
-  },
-): Child[] {
-  const usage = snapshot.opencodeGoUsage ?? {};
-  const accountNames = Object.keys(usage);
-  if (accountNames.length === 0) return [];
+function renderOpenCodeGoBars(
+  entry: SubscriptionUsageEntry & { provider: 'opencode-go' },
+  rows: Child[],
+  theme: { text: unknown; textMuted: unknown; accent: unknown },
+): void {
+  const windows: Array<{
+    label: string;
+    w: { percentRemaining: number; resetTimeIso: string };
+  }> = [];
 
-  const rows: Child[] = [];
-  let isFirstAccount = true;
+  if (entry.rolling) windows.push({ label: 'R', w: entry.rolling });
+  if (entry.weekly) windows.push({ label: 'W', w: entry.weekly });
+  if (entry.monthly) windows.push({ label: 'M', w: entry.monthly });
 
-  for (const name of accountNames) {
-    const entry = usage[name];
-    if (!entry) continue;
-
-    if (!isFirstAccount) {
-      rows.push(box({ width: '100%', height: 1 }));
-    }
-    isFirstAccount = false;
-
-    if (entry.error) {
-      rows.push(
-        box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.text }, [
-            snapshot.activeOpenCodeGoAccount === name
-              ? `★ ${truncate(name, 22)}`
-              : truncate(name, 24),
-          ]),
-          text({ fg: theme.textMuted }, [' ⚠']),
-        ]),
-      );
-      continue;
-    }
-
-    const isActive = snapshot.activeOpenCodeGoAccount === name;
-    const displayName = isActive
-      ? `★ ${truncate(name, 26)}`
-      : truncate(name, 28);
+  for (let i = 0; i < windows.length; i++) {
+    const { label, w } = windows[i];
+    if (!w) continue;
+    const usageColor = getUsageColor(w.percentRemaining);
+    const bar = renderUsageBar(w.percentRemaining);
+    const pct = w.percentRemaining.toFixed(0).padStart(3);
+    const timeLeft = formatUsageTime(w.resetTimeIso);
 
     rows.push(
-      box({ width: '100%', flexDirection: 'row' }, [
-        text(isActive ? { fg: theme.accent } : { fg: theme.text }, [
-          displayName,
-        ]),
-      ]),
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          box({ flexDirection: 'row' }, [
+            text({ fg: theme.accent }, [`${label} `]),
+            text({ fg: usageColor || theme.text }, [bar]),
+            text({ fg: usageColor || theme.textMuted }, [` ${pct}%`]),
+          ]),
+          text({ fg: theme.textMuted }, [timeLeft]),
+        ],
+      ),
     );
+  }
+}
 
-    const windows: Array<{
-      label: string;
-      w: OpenCodeGoUsageEntry['rolling'];
-    }> = [];
+function renderNeuralwattUsage(
+  entry: NeuralwattUsageEntry,
+  rows: Child[],
+  theme: { text: unknown; textMuted: unknown; accent: unknown },
+): void {
+  const { subscription, balance, usage: u } = entry;
 
-    if (entry.rolling) windows.push({ label: 'R', w: entry.rolling });
-    if (entry.weekly) windows.push({ label: 'W', w: entry.weekly });
-    if (entry.monthly) windows.push({ label: 'M', w: entry.monthly });
+  if (subscription && subscription.status === 'active') {
+    // Active subscription: show kWh bar with remaining and reset time
+    const kwhIncluded = subscription.kwh_included ?? 0;
+    const kwhUsed = subscription.kwh_used ?? 0;
+    const kwhRemaining = subscription.kwh_remaining ?? 0;
 
-    for (let i = 0; i < windows.length; i++) {
-      const { label, w } = windows[i];
-      if (!w) continue;
-      const usageColor = getUsageColor(w.percentRemaining);
-      const bar = renderUsageBar(w.percentRemaining);
-      const pct = w.percentRemaining.toFixed(0).padStart(3);
-      const timeLeft = formatUsageTime(w.resetTimeIso);
+    if (kwhIncluded > 0) {
+      const kwhPct = Math.min((kwhUsed / kwhIncluded) * 100, 100);
+      const bar = renderUsageBar(100 - kwhPct); // remaining percent
+      const remaining = kwhRemaining.toFixed(1);
+      const resetTime = subscription.current_period_end
+        ? formatUsageTime(subscription.current_period_end)
+        : '';
+      const color = kwhPct > 90 ? '#E74C3C' : kwhPct > 75 ? '#F39C12' : '';
 
       rows.push(
         box(
@@ -182,13 +178,214 @@ function renderUsagePanel(
           },
           [
             box({ flexDirection: 'row' }, [
-              text({ fg: theme.accent }, [`${label} `]),
-              text({ fg: usageColor || theme.text }, [bar]),
-              text({ fg: usageColor || theme.textMuted }, [` ${pct}%`]),
+              text({ fg: theme.accent }, ['⚡ ']),
+              text({ fg: color || theme.text }, [bar]),
+              text({ fg: color || theme.textMuted }, [` ${remaining}kWh`]),
             ]),
-            text({ fg: theme.textMuted }, [timeLeft]),
+            text({ fg: theme.textMuted }, [resetTime]),
           ],
         ),
+      );
+    }
+
+    // Also show monthly cost
+    rows.push(
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          text({ fg: theme.textMuted }, [
+            `   $${u.current_month.cost_usd.toFixed(2)} this month`,
+          ]),
+          text({ fg: theme.textMuted }, [
+            `⚡ ${u.current_month.energy_kwh.toFixed(1)} kWh`,
+          ]),
+        ],
+      ),
+    );
+  } else if (subscription && subscription.status !== 'active') {
+    // Non-active subscription (canceling, past_due, paused, trialing)
+    const statusColor =
+      subscription.status === 'past_due' || subscription.status === 'canceling'
+        ? '#E74C3C'
+        : '#F39C12';
+
+    rows.push(
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          text({ fg: statusColor }, [`  Status: ${subscription.status}`]),
+          text({ fg: theme.textMuted }, [
+            `⚡ ${u.current_month.energy_kwh.toFixed(1)} kWh`,
+          ]),
+        ],
+      ),
+    );
+
+    // Show kWh bar if available
+    const kwhIncluded = subscription.kwh_included ?? 0;
+    const kwhUsed = subscription.kwh_used ?? 0;
+    const kwhRemaining = subscription.kwh_remaining ?? 0;
+    if (kwhIncluded > 0) {
+      const kwhPct = Math.min((kwhUsed / kwhIncluded) * 100, 100);
+      const bar = renderUsageBar(100 - kwhPct);
+      const remaining = kwhRemaining.toFixed(1);
+      const resetTime = subscription.current_period_end
+        ? formatUsageTime(subscription.current_period_end)
+        : '';
+      const color = kwhPct > 90 ? '#E74C3C' : kwhPct > 75 ? '#F39C12' : '';
+
+      rows.push(
+        box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+          },
+          [
+            box({ flexDirection: 'row' }, [
+              text({ fg: theme.accent }, ['⚡ ']),
+              text({ fg: color || theme.text }, [bar]),
+              text({ fg: color || theme.textMuted }, [` ${remaining}kWh`]),
+            ]),
+            text({ fg: theme.textMuted }, [resetTime]),
+          ],
+        ),
+      );
+    }
+
+    // Show credits if available
+    if (balance.credits_remaining_usd > 0) {
+      rows.push(
+        box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+          },
+          [
+            text({ fg: theme.textMuted }, [
+              `  💰 $${balance.credits_remaining_usd.toFixed(2)} remaining`,
+            ]),
+            text({ fg: theme.textMuted }, [
+              `$${u.current_month.cost_usd.toFixed(2)}/mo`,
+            ]),
+          ],
+        ),
+      );
+    }
+  } else {
+    // No subscription (credit-only): show credits and monthly usage
+    rows.push(
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          text({ fg: theme.text }, [
+            `💰 $${balance.credits_remaining_usd.toFixed(2)} remaining`,
+          ]),
+          text({ fg: theme.textMuted }, [
+            `⚡ ${u.current_month.energy_kwh.toFixed(3)} kWh/mo`,
+          ]),
+        ],
+      ),
+    );
+    rows.push(
+      box(
+        {
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          text({ fg: theme.textMuted }, [
+            `   $${u.current_month.cost_usd.toFixed(2)} this month`,
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+function renderSubscriptionPanel(
+  snapshot: TuiSnapshot,
+  theme: {
+    text: unknown;
+    textMuted: unknown;
+    accent: unknown;
+    borderActive: unknown;
+  },
+): Child[] {
+  const usage = snapshot.subscriptionUsage ?? {};
+  const usageEntries = Object.entries(usage).sort(([, a], [, b]) => {
+    if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
+    return a.accountName.localeCompare(b.accountName);
+  });
+  if (usageEntries.length === 0) return [];
+
+  const rows: Child[] = [];
+  let isFirstAccount = true;
+
+  for (const [, entry] of usageEntries) {
+    const name = entry.accountName;
+    const activeName = snapshot.activeSubscriptionByProvider?.[entry.provider];
+    const isActive = activeName === name;
+    const providerLabel = entry.provider === 'neuralwatt' ? ' [nw]' : ' [go]';
+
+    if (!isFirstAccount) {
+      rows.push(box({ width: '100%', height: 1 }));
+    }
+    isFirstAccount = false;
+
+    if (entry.error) {
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text(isActive ? { fg: theme.accent } : { fg: theme.text }, [
+            isActive
+              ? `★ ${truncate(name, 18)}${providerLabel}`
+              : `${truncate(name, 20)}${providerLabel}`,
+          ]),
+          text({ fg: theme.textMuted }, [' ⚠']),
+        ]),
+      );
+      rows.push(
+        text({ fg: theme.textMuted }, [`  ${truncate(entry.error, 56)}`]),
+      );
+      continue;
+    }
+
+    const displayName = isActive
+      ? `★ ${truncate(name, 18)}${providerLabel}`
+      : `${truncate(name, 20)}${providerLabel}`;
+
+    rows.push(
+      box({ width: '100%', flexDirection: 'row' }, [
+        text(isActive ? { fg: theme.accent } : { fg: theme.text }, [
+          displayName,
+        ]),
+      ]),
+    );
+
+    // Provider-specific rendering
+    if (entry.provider === 'opencode-go') {
+      renderOpenCodeGoBars(entry, rows, theme);
+    } else if (entry.provider === 'neuralwatt') {
+      renderNeuralwattUsage(entry, rows, theme);
+    } else {
+      rows.push(
+        text({ fg: '#F39C12' }, [
+          '  ⚠ Provider field missing - re-add account with /subscriptions',
+        ]),
       );
     }
   }
@@ -240,10 +437,10 @@ function buildOrchestratingRows(
               now - cnode.finishedAt < FLASH_DURATION_MS + 1000)),
       );
       if (hasVisibleChildren) {
-        // Children still active — keep orchestrator visible (will show spinner)
+        // Children still active - keep orchestrator visible (will show spinner)
         visibleOrchSessions.push([id, node]);
       } else if (node.finishedAt) {
-        // No children — flash timeout applies
+        // No children - flash timeout applies
         const elapsed = now - node.finishedAt;
         if (elapsed < FLASH_DURATION_MS + 1000) {
           visibleOrchSessions.push([id, node]);
@@ -632,7 +829,7 @@ function renderSidebar(
   const orchestratingRows = buildOrchestratingRows(snapshot, now, theme);
 
   // Build usage panel rows
-  const usageRows = renderUsagePanel(snapshot, theme);
+  const usageRows = renderSubscriptionPanel(snapshot, theme);
 
   return box(
     {
