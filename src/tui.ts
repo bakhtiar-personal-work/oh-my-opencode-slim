@@ -71,6 +71,15 @@ export function formatTokenAbbrev(value: number): string {
   return `${Math.round(value / 1_000_000)}M`;
 }
 
+export function formatTokenAbbrevDecimal(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  if (value < 1000) return Math.round(value).toString();
+  if (value < 1_000_000) {
+    return `${(value / 1000).toFixed(1)}K`;
+  }
+  return `${(value / 1_000_000).toFixed(1)}M`;
+}
+
 function formatTokenExact(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '0';
   return new Intl.NumberFormat('en-US').format(Math.round(value));
@@ -84,6 +93,18 @@ export function formatSidebarModelName(model: string): string {
 export function formatAgentName(name: string): string {
   if (name.length <= 16) return name;
   return `${name.slice(0, 13)}...`;
+}
+
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '0:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 export function formatSessionUsageRows(
@@ -104,9 +125,10 @@ export function formatSessionUsageRows(
   const abbreviateLeft = options?.abbreviateLeft ?? false;
   const usage = snapshot.sessionUsage?.[sessionID];
   const contextUsed = usage?.contextUsed ?? 0;
+  const contextLimit = usage?.contextLimit ?? 0;
   const contextPct = Math.round(usage?.contextPct ?? 0);
-  const inputTotal = (usage?.input ?? 0) + (usage?.cacheRead ?? 0);
-  const outputTotal = (usage?.output ?? 0) + (usage?.reasoning ?? 0);
+  const inputTotal = usage?.input ?? 0;
+  const outputTotal = usage?.output ?? 0;
   const cacheRead = usage?.cacheRead ?? 0;
   const cacheWrite = usage?.cacheWrite ?? 0;
   const cacheTotal = cacheRead + cacheWrite;
@@ -114,15 +136,14 @@ export function formatSessionUsageRows(
   return {
     contextPct,
     ctxLabel: 'CTX',
-    ctxValue: `${abbreviateLeft ? formatTokenAbbrev(contextUsed) : formatTokenExact(contextUsed)} (${contextPct}%)`,
+    ctxValue: `${abbreviateLeft ? formatTokenAbbrevDecimal(contextUsed) : formatTokenExact(contextUsed)}/${abbreviateLeft ? formatTokenAbbrev(contextLimit) : formatTokenExact(contextLimit)} (${contextPct}%)`,
     ioInputAbbrev: formatTokenAbbrev(inputTotal),
     ioOutputAbbrev: formatTokenAbbrev(outputTotal),
     cacheLabel: 'CACHE',
-    cacheValue: abbreviateLeft
-      ? formatTokenAbbrev(cacheTotal)
-      : formatTokenExact(cacheTotal),
-    cacheReadAbbrev: formatTokenAbbrev(cacheRead),
-    cacheWriteAbbrev: formatTokenAbbrev(cacheWrite),
+    // User preference: don't abbreviate cache usage in the sidebar.
+    cacheValue: formatTokenExact(cacheTotal),
+    cacheReadAbbrev: formatTokenExact(cacheRead),
+    cacheWriteAbbrev: formatTokenExact(cacheWrite),
   };
 }
 
@@ -134,38 +155,25 @@ export function aggregateOrchestrationUsage(
   outputTotal: number;
   cacheRead: number;
   cacheWrite: number;
+  contextUsed: number;
 } {
-  const tree = snapshot.sessionTree ?? {};
-  const usageBySession = snapshot.sessionUsage ?? {};
-  const visited = new Set<string>();
-  const queue: string[] = [rootSessionID];
-
-  let inputTotal = 0;
-  let outputTotal = 0;
-  let cacheRead = 0;
-  let cacheWrite = 0;
-
-  while (queue.length > 0) {
-    const sessionID = queue.shift();
-    if (!sessionID || visited.has(sessionID)) continue;
-    visited.add(sessionID);
-
-    const usage = usageBySession[sessionID];
-    if (usage) {
-      inputTotal += usage.input + usage.cacheRead;
-      outputTotal += usage.output + usage.reasoning;
-      cacheRead += usage.cacheRead;
-      cacheWrite += usage.cacheWrite;
-    }
-
-    for (const [childID, childNode] of Object.entries(tree)) {
-      if (childNode.parentId === sessionID && !visited.has(childID)) {
-        queue.push(childID);
-      }
-    }
+  const accum = snapshot.orchestrationSigmaAccum?.[rootSessionID];
+  if (!accum) {
+    return {
+      inputTotal: 0,
+      outputTotal: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextUsed: 0,
+    };
   }
-
-  return { inputTotal, outputTotal, cacheRead, cacheWrite };
+  return {
+    inputTotal: accum.input,
+    outputTotal: accum.output,
+    cacheRead: accum.cacheRead,
+    cacheWrite: accum.cacheWrite,
+    contextUsed: accum.contextUsed,
+  };
 }
 
 export function getSidebarAgentNames(snapshot: TuiSnapshot): string[] {
@@ -480,7 +488,7 @@ function renderSubscriptionPanel(
           text(isActive ? { fg: theme.accent } : { fg: theme.text }, [
             isActive
               ? `★ ${truncate(name, 18)}${providerLabel}`
-              : `${truncate(name, 20)}${providerLabel}`,
+              : `${truncate(name, 16)}${providerLabel}`,
           ]),
           text({ fg: theme.textMuted }, [' ⚠️']),
         ]),
@@ -493,7 +501,7 @@ function renderSubscriptionPanel(
 
     const displayName = isActive
       ? `★ ${truncate(name, 18)}${providerLabel}`
-      : `${truncate(name, 20)}${providerLabel}`;
+      : `${truncate(name, 16)}${providerLabel}`;
 
     rows.push(
       box({ width: '100%', flexDirection: 'row' }, [
@@ -526,6 +534,21 @@ function getStatusText(snapshot: TuiSnapshot, sessionID: string): string {
   return snapshot.sessionStatuses?.[sessionID] ?? '-';
 }
 
+function getStatusWithDuration(
+  snapshot: TuiSnapshot,
+  sessionID: string,
+  node: SessionNode,
+  now: number,
+): string {
+  const status = getStatusText(snapshot, sessionID);
+  // Only show duration for running sessions (busy/retry)
+  if (node.status === 'busy' || node.status === 'retry') {
+    const elapsed = now - node.createdAt;
+    return `${status} (${formatDuration(elapsed)})`;
+  }
+  return status;
+}
+
 function getSpinnerChar(now: number): string {
   return SPINNER_FRAMES[Math.floor(now / 80) % SPINNER_FRAMES.length];
 }
@@ -536,11 +559,44 @@ function getStatusColor(
     text: unknown;
     textMuted: unknown;
     accent: unknown;
+    error?: unknown; // Add optional error color
   },
 ): unknown {
-  if (status === 'busy' || status === 'retry') return theme.accent;
+  const normalized = status.trim();
+  if (normalized === 'busy' || normalized.startsWith('busy '))
+    return theme.accent;
+  if (normalized === 'retry' || normalized.startsWith('retry '))
+    return theme.error ?? '#EF4444'; // Red for retry
   if (status === 'idle') return theme.textMuted;
   return theme.text;
+}
+
+/** `busy (0:12)` → status + timer; timer uses normal text color in the UI. */
+function splitStatusAndTimer(
+  full: string,
+): { status: string; timer: string } | null {
+  const m = full.match(/^(\S+)\s+(\([^)]+\))$/);
+  if (!m) return null;
+  return { status: m[1], timer: full.slice(m[1].length) };
+}
+
+function renderStatusLineWithOptionalTimer(
+  full: string,
+  theme: {
+    text: unknown;
+    textMuted: unknown;
+    accent: unknown;
+    error?: unknown;
+  },
+): Child {
+  const split = splitStatusAndTimer(full);
+  if (!split) {
+    return text({ fg: getStatusColor(full, theme) }, [full]);
+  }
+  return box({ flexDirection: 'row', flexShrink: 0 }, [
+    text({ fg: getStatusColor(split.status, theme) }, [split.status]),
+    text({ fg: theme.text }, [split.timer]),
+  ]);
 }
 
 interface SessionEntry {
@@ -553,7 +609,13 @@ interface SessionEntry {
 function buildOrchestratingRows(
   snapshot: TuiSnapshot,
   now: number,
-  theme: { text: unknown; textMuted: unknown; accent: unknown },
+  theme: {
+    text: unknown;
+    textMuted: unknown;
+    accent: unknown;
+    error?: unknown;
+  },
+  durationNow: number,
 ): [string, ...Child[]] {
   const tree = snapshot.sessionTree;
   const spinner = getSpinnerChar(now);
@@ -575,58 +637,115 @@ function buildOrchestratingRows(
     const metrics = formatSessionUsageRows(snapshot, sessionID, {
       abbreviateLeft,
     });
-    rows.push(
-      box(
-        {
-          width: '100%',
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-        },
-        [
-          box({ flexDirection: 'row', flexShrink: 1 }, [
-            text({ fg: theme.accent }, [`${prefix}${metrics.ctxLabel} `]),
-            text({ fg: theme.text }, [metrics.ctxValue]),
-          ]),
+    const isChild = !!snapshot.sessionTree?.[sessionID]?.parentId;
+
+    if (isChild) {
+      // Child session: 4-row vertical stack (after tree header + model).
+      // Row 1: CTX | Row 2: CACHE total | Row 3: Input/Output | Row 4: Read/Write
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.accent }, [`${prefix}${metrics.ctxLabel} `]),
+          text({ fg: theme.text }, [metrics.ctxValue]),
+        ]),
+      );
+      const cacheTotalForRow =
+        (snapshot.sessionUsage?.[sessionID]?.cacheRead ?? 0) +
+        (snapshot.sessionUsage?.[sessionID]?.cacheWrite ?? 0);
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.accent }, [`${prefix}${metrics.cacheLabel} `]),
+          text({ fg: theme.text }, [formatTokenExact(cacheTotalForRow)]),
+        ]),
+      );
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.text }, [prefix]),
           renderMetricPairRight(
-            '🔽',
-            metrics.ioInputAbbrev,
-            '🔼',
-            metrics.ioOutputAbbrev,
+            '↓',
+            `Input ${metrics.ioInputAbbrev}`,
+            '↑',
+            `Output ${metrics.ioOutputAbbrev}`,
             {
               leftFg: '#5DADE2',
               rightFg: '#58D68D',
               gapFg: theme.textMuted,
             },
           ),
-        ],
-      ),
-    );
-    rows.push(
-      box(
-        {
-          width: '100%',
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-        },
-        [
-          box({ flexDirection: 'row', flexShrink: 1 }, [
-            text({ fg: theme.accent }, [`${prefix}${metrics.cacheLabel} `]),
-            text({ fg: theme.text }, [metrics.cacheValue]),
-          ]),
+        ]),
+      );
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.text }, [prefix]),
           renderMetricPairRight(
             '📖',
-            metrics.cacheReadAbbrev,
+            `Read ${metrics.cacheReadAbbrev}`,
             '📝',
-            metrics.cacheWriteAbbrev,
+            `Write ${metrics.cacheWriteAbbrev}`,
             {
               leftFg: '#5DADE2',
               rightFg: '#AF7AC5',
               gapFg: theme.textMuted,
             },
           ),
-        ],
-      ),
-    );
+        ]),
+      );
+    } else {
+      // Orchestrator session: 2-row left-right compact layout
+      // Row 1: CTX ... ↓ input ↑ output
+      rows.push(
+        box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+          },
+          [
+            box({ flexDirection: 'row' }, [
+              text({ fg: theme.accent }, [`${prefix}${metrics.ctxLabel} `]),
+              text({ fg: theme.text }, [metrics.ctxValue]),
+            ]),
+            renderMetricPairRight(
+              '↓',
+              metrics.ioInputAbbrev,
+              '↑',
+              metrics.ioOutputAbbrev,
+              {
+                leftFg: '#5DADE2',
+                rightFg: '#58D68D',
+                gapFg: theme.textMuted,
+              },
+            ),
+          ],
+        ),
+      );
+      // Row 2: CACHE ... 📖 read  📝 write
+      rows.push(
+        box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+          },
+          [
+            box({ flexDirection: 'row' }, [
+              text({ fg: theme.accent }, [`${prefix}${metrics.cacheLabel} `]),
+              text({ fg: theme.text }, [metrics.cacheValue]),
+            ]),
+            renderMetricPairRight(
+              '📖',
+              metrics.cacheReadAbbrev,
+              '📝',
+              metrics.cacheWriteAbbrev,
+              {
+                leftFg: '#5DADE2',
+                rightFg: '#AF7AC5',
+                gapFg: theme.textMuted,
+              },
+            ),
+          ],
+        ),
+      );
+    }
   };
   const pushAggregateRows = (
     rows: Child[],
@@ -634,60 +753,113 @@ function buildOrchestratingRows(
     prefix: string,
   ): void => {
     const totals = aggregateOrchestrationUsage(snapshot, sessionID);
-    const totalIo = totals.inputTotal + totals.outputTotal;
+    const totalIo = totals.contextUsed;
     const totalCache = totals.cacheRead + totals.cacheWrite;
-    rows.push(
-      box(
-        {
-          width: '100%',
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-        },
-        [
-          box({ flexDirection: 'row', flexShrink: 1 }, [
-            text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ TOTAL `]),
-            text({ fg: theme.text }, [formatTokenExact(totalIo)]),
-          ]),
+    const isChild = !!snapshot.sessionTree?.[sessionID]?.parentId;
+
+    if (isChild) {
+      // Child session: Σ TOTAL | Σ CACHE | Input/Output | Read/Write
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ TOTAL `]),
+          text({ fg: theme.text }, [formatTokenExact(totalIo)]),
+        ]),
+      );
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ CACHE `]),
+          text({ fg: theme.text }, [formatTokenAbbrev(totalCache)]),
+        ]),
+      );
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.text }, [prefix]),
           renderMetricPairRight(
-            '🔽',
-            formatTokenAbbrev(totals.inputTotal),
-            '🔼',
-            formatTokenAbbrev(totals.outputTotal),
+            '↓',
+            `Input ${formatTokenAbbrev(totals.inputTotal)}`,
+            '↑',
+            `Output ${formatTokenAbbrev(totals.outputTotal)}`,
             {
               leftFg: '#5DADE2',
               rightFg: '#58D68D',
               gapFg: theme.textMuted,
             },
           ),
-        ],
-      ),
-    );
-    rows.push(
-      box(
-        {
-          width: '100%',
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-        },
-        [
-          box({ flexDirection: 'row', flexShrink: 1 }, [
-            text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ CACHE `]),
-            text({ fg: theme.text }, [formatTokenExact(totalCache)]),
-          ]),
+        ]),
+      );
+      rows.push(
+        box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.text }, [prefix]),
           renderMetricPairRight(
             '📖',
-            formatTokenAbbrev(totals.cacheRead),
+            `Read ${formatTokenAbbrev(totals.cacheRead)}`,
             '📝',
-            formatTokenAbbrev(totals.cacheWrite),
+            `Write ${formatTokenAbbrev(totals.cacheWrite)}`,
             {
               leftFg: '#5DADE2',
               rightFg: '#AF7AC5',
               gapFg: theme.textMuted,
             },
           ),
-        ],
-      ),
-    );
+        ]),
+      );
+    } else {
+      // Orchestrator session: 2-row left-right compact layout
+      // Row 1: Σ TOTAL [value] ... ↓ Input [value] ↑ Output [value]
+      rows.push(
+        box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+          },
+          [
+            box({ flexDirection: 'row' }, [
+              text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ TOTAL `]),
+              text({ fg: theme.text }, [formatTokenExact(totalIo)]),
+            ]),
+            renderMetricPairRight(
+              '↓',
+              formatTokenAbbrev(totals.inputTotal),
+              '↑',
+              formatTokenAbbrev(totals.outputTotal),
+              {
+                leftFg: '#5DADE2',
+                rightFg: '#58D68D',
+                gapFg: theme.textMuted,
+              },
+            ),
+          ],
+        ),
+      );
+      // Row 2: Σ CACHE [value] ... 📖 Read [value] 📝 Write [value]
+      rows.push(
+        box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+          },
+          [
+            box({ flexDirection: 'row' }, [
+              text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ CACHE `]),
+              text({ fg: theme.text }, [formatTokenAbbrev(totalCache)]),
+            ]),
+            renderMetricPairRight(
+              '📖',
+              formatTokenAbbrev(totals.cacheRead),
+              '📝',
+              formatTokenAbbrev(totals.cacheWrite),
+              {
+                leftFg: '#5DADE2',
+                rightFg: '#AF7AC5',
+                gapFg: theme.textMuted,
+              },
+            ),
+          ],
+        ),
+      );
+    }
   };
 
   // Collect visible orchestrator sessions (running + flashing done)
@@ -746,7 +918,12 @@ function buildOrchestratingRows(
           : childFlash
             ? '·'
             : ' ';
-      const childStatusText = getStatusText(snapshot, childId);
+      const childStatusText = getStatusWithDuration(
+        snapshot,
+        childId,
+        child,
+        durationNow,
+      );
       const childVariant =
         child.variant ?? snapshot.agentDetails?.[child.agent]?.variant;
       const detailPrefix = `${indentPrefix}${pipeChar}    `;
@@ -762,16 +939,14 @@ function buildOrchestratingRows(
             text({ fg: theme.text }, [
               `${indentPrefix}${branchChar}─ ${indicator} ${child.agent}`,
             ]),
-            text({ fg: getStatusColor(childStatusText, theme) }, [
-              childStatusText,
-            ]),
+            renderStatusLineWithOptionalTimer(childStatusText, theme),
           ],
         ),
       );
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
           text({ fg: theme.text }, [
-            `${detailPrefix}${childModel}${childVariant ? ` - ${childVariant}` : ''}`,
+            `${detailPrefix}${truncate(childModel, 14)}${childVariant ? ` - ${childVariant}` : ''}`,
           ]),
         ]),
       );
@@ -783,7 +958,7 @@ function buildOrchestratingRows(
 
   for (const [orchId, orchNode] of visibleOrchSessions) {
     const modelStr = orchNode.model
-      ? formatSidebarModelName(orchNode.model)
+      ? truncate(formatSidebarModelName(orchNode.model), 20)
       : '';
     const visibleChildren = getVisibleChildren(orchId);
 
@@ -802,10 +977,23 @@ function buildOrchestratingRows(
     const orchDot = orchShowSpinner ? spinner : orchFlash ? '·' : ' ';
 
     rows.push(
-      box({ flexDirection: 'row' }, [
-        text({ fg: theme.accent }, [`${orchDot} `]),
-        text({ fg: theme.text }, [truncate(orchNode.title || orchId, 28)]),
-      ]),
+      box(
+        {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+        },
+        [
+          box({ flexDirection: 'row' }, [
+            text({ fg: theme.accent }, [`${orchDot} `]),
+            text({ fg: theme.text }, [truncate(orchNode.title || orchId, 25)]),
+          ]),
+          text({ fg: theme.text }, [
+            orchNode.status === 'busy' || orchNode.status === 'retry'
+              ? `(${formatDuration(durationNow - orchNode.createdAt)})`
+              : '',
+          ]),
+        ],
+      ),
     );
     const orchVariant =
       orchNode.variant ?? snapshot.agentDetails?.orchestrator?.variant;
@@ -825,7 +1013,7 @@ function buildOrchestratingRows(
         ],
       ),
     );
-    pushUsageRows(rows, orchId, '  ', false);
+    pushUsageRows(rows, orchId, '  ', true);
     pushAggregateRows(rows, orchId, '  ');
     renderChildren(orchId, '  ');
 
@@ -883,9 +1071,13 @@ function renderSidebar(
     borderActive: unknown;
     text: unknown;
     textMuted: unknown;
+    error?: unknown;
   },
+  secondTick: number,
+  startWallTime: number,
 ): JSX.Element {
   const now = Date.now();
+  const durationNow = startWallTime + secondTick * 1000;
   const sessions = getActiveSessions(snapshot, now);
   const totalActive = sessions.filter((s) => s.running).length;
   const spinner = getSpinnerChar(now);
@@ -961,7 +1153,7 @@ function renderSidebar(
       agentName;
     const indicatorColor = theme.accent;
     const nameStr = formatAgentName(agentName);
-    const descStr = truncate(desc, 12);
+    const descStr = truncate(desc, 10);
 
     agentRows.push(
       box(
@@ -981,7 +1173,7 @@ function renderSidebar(
       ),
     );
 
-    const modelStr = truncate(model, 16).padEnd(8);
+    const modelStr = truncate(model, 20).padEnd(8);
     const statusText = getStatusText(snapshot, sessionID);
 
     agentRows.push(
@@ -995,7 +1187,15 @@ function renderSidebar(
           text({ fg: theme.textMuted }, [
             `  ${modelStr}${variant ? ` - ${variant}` : ''}`,
           ]),
-          text({ fg: getStatusColor(statusText, theme) }, [statusText]),
+          text(
+            {
+              fg: getStatusColor(
+                snapshot.sessionStatuses?.[sessionID] ?? '-',
+                theme,
+              ),
+            },
+            [statusText],
+          ),
         ],
       ),
     );
@@ -1045,7 +1245,7 @@ function renderSidebar(
       const flashDot = finished && Math.floor(elapsed / 200) % 2 === 0;
       const indicator = running ? spinner : flashDot ? '·' : ' ';
       const nameStr = formatAgentName(agentName);
-      const modelStr = truncate(model, 16).padEnd(8);
+      const modelStr = truncate(model, 20).padEnd(8);
       const customStatusText = getStatusText(snapshot, sessionID);
 
       agentRows.push(
@@ -1089,7 +1289,12 @@ function renderSidebar(
     agentRows.push(text({ fg: theme.textMuted }, ['No active agents']));
   }
 
-  const orchestratingRows = buildOrchestratingRows(snapshot, now, theme);
+  const orchestratingRows = buildOrchestratingRows(
+    snapshot,
+    now,
+    theme,
+    durationNow,
+  );
 
   // Build usage panel rows
   const usageRows = renderSubscriptionPanel(snapshot, theme);
@@ -1120,64 +1325,64 @@ function renderSidebar(
       ...agentRows,
       ...(orchestratingRows.length > 0
         ? [
-            box({ width: '100%', height: 1 }),
-            box(
-              {
-                width: '100%',
-                flexDirection: 'column',
-                border: BORDER,
-                borderColor: theme.borderActive,
-                paddingTop: 0,
-                paddingBottom: 0,
-                paddingLeft: 0,
-                paddingRight: 0,
-              },
-              [
-                box(
-                  {
-                    width: '100%',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                  },
-                  [
-                    text({ fg: theme.text }, ['Orchestrating']),
-                    text({ fg: theme.textMuted }, [
-                      `[${orchestratingRows[0] as string}]`,
-                    ]),
-                  ],
-                ),
-                ...(orchestratingRows.slice(1) as Child[]),
-              ],
-            ),
-          ]
+          box({ width: '100%', height: 1 }),
+          box(
+            {
+              width: '100%',
+              flexDirection: 'column',
+              border: BORDER,
+              borderColor: theme.borderActive,
+              paddingTop: 0,
+              paddingBottom: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+            },
+            [
+              box(
+                {
+                  width: '100%',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                },
+                [
+                  text({ fg: theme.text }, ['Orchestrating']),
+                  text({ fg: theme.textMuted }, [
+                    `[${orchestratingRows[0] as string}]`,
+                  ]),
+                ],
+              ),
+              ...(orchestratingRows.slice(1) as Child[]),
+            ],
+          ),
+        ]
         : []),
       ...(usageRows.length > 0
         ? [
-            box({ width: '100%', height: 1 }),
-            box(
-              {
-                width: '100%',
-                flexDirection: 'column',
-                border: BORDER,
-                borderColor: theme.borderActive,
-                paddingTop: 0,
-                paddingBottom: 0,
-                paddingLeft: 0,
-                paddingRight: 0,
-              },
-              [
-                box(
-                  {
-                    width: '100%',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                  },
-                  [text({ fg: theme.text }, ['API Usage'])],
-                ),
-                ...(usageRows as Child[]),
-              ],
-            ),
-          ]
+          box({ width: '100%', height: 1 }),
+          box(
+            {
+              width: '100%',
+              flexDirection: 'column',
+              border: BORDER,
+              borderColor: theme.borderActive,
+              paddingTop: 0,
+              paddingBottom: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+            },
+            [
+              box(
+                {
+                  width: '100%',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                },
+                [text({ fg: theme.text }, ['API Usage'])],
+              ),
+              ...(usageRows as Child[]),
+            ],
+          ),
+        ]
         : []),
     ],
   );
@@ -1188,6 +1393,8 @@ const plugin: TuiPluginModule & { id: string } = {
   tui: async (api, _options, _meta) => {
     const [snapshot, setSnapshot] = createSignal(readTuiSnapshot());
     const [tick, setTick] = createSignal(0);
+    const [secondTick, setSecondTick] = createSignal(0);
+    const startWallTime = Date.now();
 
     const dataTimer = setInterval(async () => {
       try {
@@ -1201,9 +1408,14 @@ const plugin: TuiPluginModule & { id: string } = {
       setTick(tick() + 1);
     }, 50);
 
+    const secondTimer = setInterval(() => {
+      setSecondTick(secondTick() + 1);
+    }, 1000);
+
     api.lifecycle.onDispose(() => {
       clearInterval(dataTimer);
       clearInterval(animTimer);
+      clearInterval(secondTimer);
     });
 
     api.slots.register({
@@ -1211,7 +1423,13 @@ const plugin: TuiPluginModule & { id: string } = {
       slots: {
         sidebar_content() {
           tick();
-          return renderSidebar(snapshot(), api.theme.current);
+          secondTick();
+          return renderSidebar(
+            snapshot(),
+            api.theme.current,
+            secondTick(),
+            startWallTime,
+          );
         },
       },
     });

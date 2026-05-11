@@ -213,13 +213,6 @@ async function ensureModelContextLimits(client: {
   return _modelLimitFetchPromise;
 }
 
-function getCachedContextLimit(
-  providerID: string,
-  modelID: string,
-): number | null {
-  return _modelContextLimitCache.get(`${providerID}/${modelID}`) ?? null;
-}
-
 /**
  * Refresh usage telemetry for a single session by fetching its messages
  * and re-summing token data. Best-effort: errors are silently caught.
@@ -241,42 +234,60 @@ async function refreshSessionUsage(
       (m) => (m as { info?: { role?: string } }).info?.role === 'assistant',
     );
 
+    // Extract tokens from last assistant message only (SDK supplies cumulative values)
     let totalInput = 0;
-    let contextUsed = 0;
     let totalOutput = 0;
     let totalReasoning = 0;
     let totalCacheRead = 0;
     let totalCacheWrite = 0;
+    let contextLimit = 0;
+    let contextUsed = 0;
+    let contextPct = 0;
 
-    for (const msg of assistantMsgs) {
-      const telemetry = readTokenTelemetry(msg);
+    // Ensure context limit cache is populated before recording usage
+    await ensureModelContextLimits(ctx.client).catch(() => { });
+
+    const lastTokenMsg = [...assistantMsgs]
+      .reverse()
+      .find((m) => readTokenTelemetry(m));
+    if (lastTokenMsg) {
+      const telemetry = readTokenTelemetry(lastTokenMsg);
       if (telemetry) {
-        totalInput = Math.max(totalInput, telemetry.input);
-        contextUsed = Math.max(
-          contextUsed,
-          telemetry.input + telemetry.cacheRead,
-        );
-        totalOutput += telemetry.output;
-        totalReasoning += telemetry.reasoning;
-        totalCacheRead += telemetry.cacheRead;
-        totalCacheWrite += telemetry.cacheWrite;
+        totalInput = telemetry.input;
+        totalOutput = telemetry.output;
+        totalReasoning = telemetry.reasoning;
+        totalCacheRead = telemetry.cacheRead;
+        totalCacheWrite = telemetry.cacheWrite;
+        contextLimit = telemetry.contextLimit;
+        // Sidebar expects CTX used to match Input + Output tokens.
+        // Input row = input + cacheRead
+        // Output row = output + reasoning
+        contextUsed =
+          telemetry.input +
+          telemetry.cacheRead +
+          telemetry.output +
+          telemetry.reasoning;
+        contextPct = contextLimit > 0 ? (contextUsed / contextLimit) * 100 : 0;
       }
     }
 
-    // Warm up context limit cache (fire-and-forget, idempotent)
-    ensureModelContextLimits(ctx.client).catch(() => { });
-
-    const lastMsg = assistantMsgs[assistantMsgs.length - 1] ?? null;
-    const lastTelemetry = lastMsg ? readTokenTelemetry(lastMsg) : null;
-    const actualContextLimit = lastTelemetry?.contextLimit ?? 0;
-    const contextPct =
-      actualContextLimit > 0 ? (contextUsed / actualContextLimit) * 100 : 0;
+    // Fallback: if message didn't provide context limit, look up from cache
+    if (contextLimit === 0 && contextUsed > 0) {
+      const model = readTuiSnapshot().sessionModels[sessionID];
+      const cachedLimit = model
+        ? _modelContextLimitCache.get(model)
+        : undefined;
+      if (cachedLimit && cachedLimit > 0) {
+        contextLimit = cachedLimit;
+        contextPct = (contextUsed / contextLimit) * 100;
+      }
+    }
 
     if (contextUsed > 0 || totalInput > 0 || totalOutput > 0) {
       recordSessionUsage({
         sessionID,
         contextUsed,
-        contextLimit: actualContextLimit,
+        contextLimit,
         contextPct,
         input: totalInput,
         output: totalOutput,
@@ -1094,32 +1105,39 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           const output = part.tokens.output ?? 0;
           const reasoning = part.tokens.reasoning ?? 0;
           const cacheRead = part.tokens.cache?.read ?? 0;
-          const cacheWrite = part.tokens.cache?.write ?? 0;
+          // Don't record cache tokens during streaming - they're cumulative
+          // per message and will be correctly summed by the message.updated
+          // handler
 
-          if (input > 0 || output > 0) {
-            // Use cached context limit (will be populated by message.updated
-            // handler)
-            const contextLimit =
-              getCachedContextLimit(
-                event.properties?.providerID ?? '',
-                event.properties?.modelID ?? '',
-              ) ?? 0;
+          if (input > 0 || output > 0 || reasoning > 0 || cacheRead > 0) {
+            // Calculate contextUsed from the same components as
+            // the sidebar Input + Output rows.
+            const streamContextUsed = input + cacheRead + output + reasoning;
 
-            // Don't update contextUsed during streaming - only cumulative
-            // I/O tokens; the completion handler tracks peak context.
-            const contextUsed = 0;
-            const contextPct = 0;
+            // Look up contextLimit from cache using session's model
+            let streamContextLimit = 0;
+            const sessionModel =
+              readTuiSnapshot().sessionModels[part.sessionID];
+            if (sessionModel) {
+              streamContextLimit =
+                _modelContextLimitCache.get(sessionModel) ?? 0;
+            }
+
+            const streamContextPct =
+              streamContextLimit > 0
+                ? (streamContextUsed / streamContextLimit) * 100
+                : 0;
 
             recordSessionUsage({
               sessionID: part.sessionID,
-              contextUsed,
-              contextLimit,
-              contextPct,
+              contextUsed: streamContextUsed,
+              contextLimit: streamContextLimit,
+              contextPct: streamContextPct,
               input,
               output,
               reasoning,
               cacheRead,
-              cacheWrite,
+              cacheWrite: part.tokens.cache?.write ?? 0,
             });
           }
         }
@@ -1149,8 +1167,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         const sessionID = info?.sessionID ?? event.properties?.sessionID;
         if (sessionID) {
           try {
-            // Fetch all messages for the session and sum tokens from all
-            // assistant messages to get the total context usage.
+            // Fetch messages and extract tokens from last assistant message only
             const messagesResult = await ctx.client.session.messages({
               path: { id: sessionID },
             });
@@ -1162,65 +1179,62 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
                 (m as { info?: { role?: string } }).info?.role === 'assistant',
             );
 
-            // Sum tokens across all assistant messages
+            // Extract tokens from last assistant message only (SDK supplies cumulative values)
             let totalInput = 0;
-            let contextUsed = 0;
             let totalOutput = 0;
             let totalReasoning = 0;
             let totalCacheRead = 0;
             let totalCacheWrite = 0;
+            let contextLimit = 0;
+            let contextUsed = 0;
+            let contextPct = 0;
 
-            for (const msg of assistantMsgs) {
-              const telemetry = readTokenTelemetry(msg);
+            // Ensure context limit cache is populated before recording usage
+            await ensureModelContextLimits(ctx.client).catch(() => { });
+
+            const lastTokenMsg = [...assistantMsgs]
+              .reverse()
+              .find((m) => readTokenTelemetry(m));
+            if (lastTokenMsg) {
+              const telemetry = readTokenTelemetry(lastTokenMsg);
               if (telemetry) {
-                // Track peak input across all messages (not just last)
-                totalInput = Math.max(totalInput, telemetry.input);
-                // Track peak context (input + cacheRead) for CTX percentage bar
-                contextUsed = Math.max(
-                  contextUsed,
-                  telemetry.input + telemetry.cacheRead,
-                );
-                // Sum cumulative outputs
-                totalOutput += telemetry.output;
-                totalReasoning += telemetry.reasoning;
-                totalCacheRead += telemetry.cacheRead;
-                totalCacheWrite += telemetry.cacheWrite;
+                totalInput = telemetry.input;
+                totalOutput = telemetry.output;
+                totalReasoning = telemetry.reasoning;
+                totalCacheRead = telemetry.cacheRead;
+                totalCacheWrite = telemetry.cacheWrite;
+                contextLimit = telemetry.contextLimit;
+                // Sidebar expects CTX used to match Input + Output tokens.
+                // Input row = input + cacheRead
+                // Output row = output + reasoning
+                contextUsed =
+                  telemetry.input +
+                  telemetry.cacheRead +
+                  telemetry.output +
+                  telemetry.reasoning;
+                contextPct =
+                  contextLimit > 0 ? (contextUsed / contextLimit) * 100 : 0;
               }
             }
 
-            // Resolve the model's context limit from provider
-            // configuration.
-            if (
-              typeof info?.providerID === 'string' &&
-              typeof info?.modelID === 'string'
-            ) {
-              ensureModelContextLimits(ctx.client).catch(() => { });
+            // Fallback: if message didn't provide context limit, look up from
+            // cache using the model associated with this session.
+            if (contextLimit === 0) {
+              const model = readTuiSnapshot().sessionModels[sessionID];
+              const cachedLimit = model
+                ? _modelContextLimitCache.get(model)
+                : undefined;
+              if (cachedLimit && cachedLimit > 0) {
+                contextLimit = cachedLimit;
+                contextPct = (contextUsed / contextLimit) * 100;
+              }
             }
 
-            // Keep last message's telemetry for context limit fallback
-            const lastMsg = assistantMsgs[assistantMsgs.length - 1] ?? null;
-            const lastTelemetry = lastMsg ? readTokenTelemetry(lastMsg) : null;
-
-            const actualContextLimit =
-              typeof info?.providerID === 'string' &&
-                typeof info?.modelID === 'string'
-                ? (getCachedContextLimit(info.providerID, info.modelID) ??
-                  lastTelemetry?.contextLimit ??
-                  0)
-                : (lastTelemetry?.contextLimit ?? 0);
-
-            const contextPct =
-              actualContextLimit > 0
-                ? (contextUsed / actualContextLimit) * 100
-                : 0;
-
-            // Only record if we have actual token data (prevent overwriting
-            // with zeros)
             if (contextUsed > 0 || totalInput > 0 || totalOutput > 0) {
               recordSessionUsage({
                 sessionID,
                 contextUsed,
-                contextLimit: actualContextLimit,
+                contextLimit,
                 contextPct,
                 input: totalInput,
                 output: totalOutput,

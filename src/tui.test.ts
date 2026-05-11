@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
   aggregateOrchestrationUsage,
+  formatDuration,
   formatSessionUsageRows,
   formatSidebarModelName,
   formatTokenAbbrev,
+  formatTokenAbbrevDecimal,
   getSidebarAgentNames,
 } from './tui';
 import type { TuiSnapshot } from './tui-state';
@@ -23,6 +25,9 @@ function createSnapshot(agentModels: TuiSnapshot['agentModels']): TuiSnapshot {
     sessionTree: {},
     sessionStatuses: {},
     sessionUsage: {},
+    orchestrationSigmaAccum: {},
+    orchestrationUsageLastSeen: {},
+    sessionProjects: {},
     subscriptionUsage: {},
     activeSubscriptionByProvider: {},
   };
@@ -65,6 +70,29 @@ describe('formatSidebarModelName', () => {
   });
 });
 
+describe('formatDuration', () => {
+  test('formats milliseconds as MM:SS under 1 hour', () => {
+    expect(formatDuration(0)).toBe('0:00');
+    expect(formatDuration(1_000)).toBe('0:01');
+    expect(formatDuration(60_000)).toBe('1:00');
+    expect(formatDuration(699_000)).toBe('11:39');
+    expect(formatDuration(3_599_000)).toBe('59:59');
+  });
+
+  test('formats as H:MM:SS for 1 hour or more', () => {
+    expect(formatDuration(3_600_000)).toBe('1:00:00');
+    expect(formatDuration(5_019_000)).toBe('1:23:39');
+    expect(formatDuration(7_200_000)).toBe('2:00:00');
+    expect(formatDuration(86_400_000)).toBe('24:00:00');
+  });
+
+  test('handles edge cases', () => {
+    expect(formatDuration(-1)).toBe('0:00');
+    expect(formatDuration(Infinity)).toBe('0:00');
+    expect(formatDuration(NaN)).toBe('0:00');
+  });
+});
+
 describe('orchestrating usage metrics formatters', () => {
   test('abbreviates token counts for sidebar rows', () => {
     expect(formatTokenAbbrev(950)).toBe('950');
@@ -74,6 +102,18 @@ describe('orchestrating usage metrics formatters', () => {
     expect(formatTokenAbbrev(999_500)).toBe('1M');
     expect(formatTokenAbbrev(1_150_000)).toBe('1M');
     expect(formatTokenAbbrev(1_500_000)).toBe('2M');
+  });
+
+  test('abbreviates with 1 decimal for context used values', () => {
+    expect(formatTokenAbbrevDecimal(100)).toBe('100');
+    expect(formatTokenAbbrevDecimal(999)).toBe('999');
+    expect(formatTokenAbbrevDecimal(1_000)).toBe('1.0K');
+    expect(formatTokenAbbrevDecimal(1_100)).toBe('1.1K');
+    expect(formatTokenAbbrevDecimal(8_200)).toBe('8.2K');
+    expect(formatTokenAbbrevDecimal(150_000)).toBe('150.0K');
+    expect(formatTokenAbbrevDecimal(999_000)).toBe('999.0K');
+    expect(formatTokenAbbrevDecimal(1_200_000)).toBe('1.2M');
+    expect(formatTokenAbbrevDecimal(1_500_000)).toBe('1.5M');
   });
 
   test('formats context/input/output/cache rows for a session', () => {
@@ -93,7 +133,36 @@ describe('orchestrating usage metrics formatters', () => {
     expect(formatSessionUsageRows(snapshot, 'session-1')).toEqual({
       contextPct: 38,
       ctxLabel: 'CTX',
-      ctxValue: '150,000 (38%)',
+      ctxValue: '150,000/400,000 (38%)',
+      ioInputAbbrev: '8K',
+      ioOutputAbbrev: '1K',
+      cacheLabel: 'CACHE',
+      cacheValue: '500',
+      cacheReadAbbrev: '200',
+      cacheWriteAbbrev: '300',
+    });
+  });
+
+  test('formats context with different abbreviation styles when abbreviateLeft is true', () => {
+    const snapshot = createSnapshot({});
+    snapshot.sessionUsage['session-1'] = {
+      contextUsed: 150_000,
+      contextLimit: 400_000,
+      contextPct: 38,
+      input: 8_000,
+      output: 900,
+      reasoning: 200,
+      cacheRead: 200,
+      cacheWrite: 300,
+      updatedAt: 0,
+    };
+
+    expect(
+      formatSessionUsageRows(snapshot, 'session-1', { abbreviateLeft: true }),
+    ).toEqual({
+      contextPct: 38,
+      ctxLabel: 'CTX',
+      ctxValue: '150.0K/400K (38%)',
       ioInputAbbrev: '8K',
       ioOutputAbbrev: '1K',
       cacheLabel: 'CACHE',
@@ -168,12 +237,22 @@ describe('orchestrating usage metrics formatters', () => {
         updatedAt: 0,
       },
     };
+    snapshot.orchestrationSigmaAccum = {
+      orch: {
+        contextUsed: 15_200,
+        input: 12_000,
+        output: 2_000,
+        cacheRead: 800,
+        cacheWrite: 120,
+      },
+    };
 
     expect(aggregateOrchestrationUsage(snapshot, 'orch')).toEqual({
-      inputTotal: 3_950,
-      outputTotal: 880,
-      cacheRead: 450,
-      cacheWrite: 70,
+      inputTotal: 12_000,
+      outputTotal: 2_000,
+      cacheRead: 800,
+      cacheWrite: 120,
+      contextUsed: 15_200,
     });
   });
 });

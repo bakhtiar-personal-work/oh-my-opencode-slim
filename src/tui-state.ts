@@ -43,6 +43,22 @@ export interface SessionUsageEntry {
   updatedAt: number;
 }
 
+export interface OrchestrationSigmaAccum {
+  contextUsed: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface SessionUsageDeltaBasis {
+  contextUsed: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
 export interface TuiSnapshot {
   version: 1;
   updatedAt: number;
@@ -57,6 +73,8 @@ export interface TuiSnapshot {
   sessionTree: Record<string, SessionNode>;
   sessionStatuses: Record<string, string>;
   sessionUsage: Record<string, SessionUsageEntry>;
+  orchestrationSigmaAccum: Record<string, OrchestrationSigmaAccum>;
+  orchestrationUsageLastSeen: Record<string, SessionUsageDeltaBasis>;
   sessionProjects: Record<string, string>;
   /** Subscription usage entries keyed by provider + account name. */
   subscriptionUsage: Record<string, SubscriptionUsageEntry>;
@@ -98,6 +116,8 @@ function emptySnapshot(): TuiSnapshot {
     sessionTree: {},
     sessionStatuses: {},
     sessionUsage: {},
+    orchestrationSigmaAccum: {},
+    orchestrationUsageLastSeen: {},
     sessionProjects: {},
     subscriptionUsage: {},
     activeSubscriptionByProvider: {},
@@ -146,6 +166,54 @@ function normalizeSessionUsage(
   return result;
 }
 
+function normalizeSigmaAccum(
+  value: Record<string, Partial<OrchestrationSigmaAccum>>,
+): Record<string, OrchestrationSigmaAccum> {
+  const result: Record<string, OrchestrationSigmaAccum> = {};
+  for (const [rootSessionID, entry] of Object.entries(value)) {
+    if (!entry) continue;
+    result[rootSessionID] = {
+      contextUsed:
+        typeof entry.contextUsed === 'number'
+          ? Math.max(0, entry.contextUsed)
+          : 0,
+      input: typeof entry.input === 'number' ? Math.max(0, entry.input) : 0,
+      output: typeof entry.output === 'number' ? Math.max(0, entry.output) : 0,
+      cacheRead:
+        typeof entry.cacheRead === 'number' ? Math.max(0, entry.cacheRead) : 0,
+      cacheWrite:
+        typeof entry.cacheWrite === 'number'
+          ? Math.max(0, entry.cacheWrite)
+          : 0,
+    };
+  }
+  return result;
+}
+
+function normalizeUsageLastSeen(
+  value: Record<string, Partial<SessionUsageDeltaBasis>>,
+): Record<string, SessionUsageDeltaBasis> {
+  const result: Record<string, SessionUsageDeltaBasis> = {};
+  for (const [sessionID, entry] of Object.entries(value)) {
+    if (!entry) continue;
+    result[sessionID] = {
+      contextUsed:
+        typeof entry.contextUsed === 'number'
+          ? Math.max(0, entry.contextUsed)
+          : 0,
+      input: typeof entry.input === 'number' ? Math.max(0, entry.input) : 0,
+      output: typeof entry.output === 'number' ? Math.max(0, entry.output) : 0,
+      cacheRead:
+        typeof entry.cacheRead === 'number' ? Math.max(0, entry.cacheRead) : 0,
+      cacheWrite:
+        typeof entry.cacheWrite === 'number'
+          ? Math.max(0, entry.cacheWrite)
+          : 0,
+    };
+  }
+  return result;
+}
+
 function parseSnapshot(value: string): TuiSnapshot | null {
   const parsed = JSON.parse(value) as Partial<TuiSnapshot> | undefined;
   if (parsed?.version !== 1) return null;
@@ -180,6 +248,12 @@ function parseSnapshot(value: string): TuiSnapshot | null {
     sessionTree: parsed.sessionTree ?? {},
     sessionStatuses: parsed.sessionStatuses ?? {},
     sessionUsage: normalizeSessionUsage(parsed.sessionUsage ?? {}),
+    orchestrationSigmaAccum: normalizeSigmaAccum(
+      parsed.orchestrationSigmaAccum ?? {},
+    ),
+    orchestrationUsageLastSeen: normalizeUsageLastSeen(
+      parsed.orchestrationUsageLastSeen ?? {},
+    ),
     sessionProjects: parsed.sessionProjects ?? {},
     subscriptionUsage: normalizeSubscriptionUsage(
       parsed.subscriptionUsage ?? {},
@@ -347,13 +421,13 @@ export function recordSessionNode(input: {
   updateSnapshot((snapshot) => {
     const existing = sessionTreeStore[input.sessionID] ??
       snapshot.sessionTree[input.sessionID] ?? {
-        title: '',
-        agent: '',
-        model: '',
-        childIds: [],
-        status: 'busy' as const,
-        createdAt: Date.now(),
-      };
+      title: '',
+      agent: '',
+      model: '',
+      childIds: [],
+      status: 'busy' as const,
+      createdAt: Date.now(),
+    };
     const node = {
       ...existing,
       title: input.title ?? existing.title,
@@ -387,11 +461,27 @@ export function recordSessionDone(sessionID: string): void {
   });
 }
 
+function resolveOrchestrationRootSessionID(
+  snapshot: TuiSnapshot,
+  sessionID: string,
+): string | null {
+  let currentID: string | undefined = sessionID;
+  const visited = new Set<string>();
+  while (currentID && !visited.has(currentID)) {
+    visited.add(currentID);
+    const node: SessionNode | undefined = snapshot.sessionTree[currentID];
+    if (!node) return null;
+    if (node.agent === 'orchestrator') return currentID;
+    currentID = node.parentId;
+  }
+  return null;
+}
+
 export function recordSessionUsage(input: {
   sessionID: string;
-  contextUsed: number;
-  contextLimit: number;
-  contextPct: number;
+  contextUsed?: number;
+  contextLimit?: number;
+  contextPct?: number;
   input: number;
   output: number;
   reasoning: number;
@@ -400,29 +490,91 @@ export function recordSessionUsage(input: {
 }): void {
   updateSnapshot((snapshot) => {
     const prev = snapshot.sessionUsage[input.sessionID];
-
-    // Preserve previous contextPct if new one is unreliable (0% due to
-    // uncached limit). This prevents flickering when streaming handler
-    // overwrites completion data.
-    const shouldPreservePct =
-      prev &&
-      input.contextPct === 0 &&
-      prev.contextPct > 0 &&
-      input.contextLimit === 0;
-
-    snapshot.sessionUsage[input.sessionID] = {
-      contextUsed: Math.max(prev?.contextUsed ?? 0, input.contextUsed),
-      contextLimit: Math.max(0, input.contextLimit),
-      contextPct: shouldPreservePct
-        ? prev.contextPct
-        : Math.max(0, Math.min(100, input.contextPct)),
-      input: Math.max(0, input.input),
-      output: Math.max(0, input.output),
-      reasoning: Math.max(0, input.reasoning),
-      cacheRead: Math.max(0, input.cacheRead),
-      cacheWrite: Math.max(0, input.cacheWrite),
+    const next: SessionUsageEntry = {
+      contextUsed:
+        input.contextUsed !== undefined
+          ? Math.max(prev?.contextUsed ?? 0, input.contextUsed)
+          : (prev?.contextUsed ?? 0),
+      contextLimit: input.contextLimit ?? prev?.contextLimit ?? 0,
+      contextPct:
+        input.contextPct !== undefined
+          ? Math.max(0, Math.min(100, input.contextPct))
+          : (prev?.contextPct ?? 0),
+      input:
+        input.input !== undefined
+          ? Math.max(prev?.input ?? 0, input.input)
+          : (prev?.input ?? 0),
+      output:
+        input.output !== undefined
+          ? Math.max(prev?.output ?? 0, input.output)
+          : (prev?.output ?? 0),
+      reasoning:
+        input.reasoning !== undefined
+          ? Math.max(prev?.reasoning ?? 0, input.reasoning)
+          : (prev?.reasoning ?? 0),
+      cacheRead:
+        input.cacheRead !== undefined
+          ? Math.max(prev?.cacheRead ?? 0, input.cacheRead)
+          : (prev?.cacheRead ?? 0),
+      cacheWrite:
+        input.cacheWrite !== undefined
+          ? Math.max(prev?.cacheWrite ?? 0, input.cacheWrite)
+          : (prev?.cacheWrite ?? 0),
       updatedAt: Date.now(),
     };
+    snapshot.sessionUsage[input.sessionID] = next;
+
+    const rootSessionID = resolveOrchestrationRootSessionID(
+      snapshot,
+      input.sessionID,
+    );
+    if (!rootSessionID) return;
+
+    const previousSeen = snapshot.orchestrationUsageLastSeen[
+      input.sessionID
+    ] ?? {
+      contextUsed: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    };
+    const nextSeen: SessionUsageDeltaBasis = {
+      contextUsed: next.contextUsed,
+      input: next.input,
+      output: next.output,
+      cacheRead: next.cacheRead,
+      cacheWrite: next.cacheWrite,
+    };
+    const deltaContextUsed = Math.max(
+      0,
+      nextSeen.contextUsed - previousSeen.contextUsed,
+    );
+    const deltaInput = Math.max(0, nextSeen.input - previousSeen.input);
+    const deltaOutput = Math.max(0, nextSeen.output - previousSeen.output);
+    const deltaCacheRead = Math.max(
+      0,
+      nextSeen.cacheRead - previousSeen.cacheRead,
+    );
+    const deltaCacheWrite = Math.max(
+      0,
+      nextSeen.cacheWrite - previousSeen.cacheWrite,
+    );
+    const prevAccum = snapshot.orchestrationSigmaAccum[rootSessionID] ?? {
+      contextUsed: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    };
+    snapshot.orchestrationSigmaAccum[rootSessionID] = {
+      contextUsed: prevAccum.contextUsed + deltaContextUsed,
+      input: prevAccum.input + deltaInput,
+      output: prevAccum.output + deltaOutput,
+      cacheRead: prevAccum.cacheRead + deltaCacheRead,
+      cacheWrite: prevAccum.cacheWrite + deltaCacheWrite,
+    };
+    snapshot.orchestrationUsageLastSeen[input.sessionID] = nextSeen;
   });
 }
 
@@ -473,12 +625,17 @@ export function recordSessionProject(input: {
 /** Delete ALL entries for a session across all snapshot records */
 export function deleteSessionEntries(sessionID: string): void {
   updateSnapshot((snapshot) => {
+    const node = snapshot.sessionTree[sessionID];
     delete snapshot.activeSessions[sessionID];
     delete snapshot.sessionStatuses[sessionID];
     delete snapshot.sessionModels[sessionID];
     delete snapshot.sessionVariants[sessionID];
     delete snapshot.sessionFinished[sessionID];
     delete snapshot.sessionUsage[sessionID];
+    delete snapshot.orchestrationUsageLastSeen[sessionID];
+    if (node?.agent === 'orchestrator') {
+      delete snapshot.orchestrationSigmaAccum[sessionID];
+    }
     delete snapshot.sessionProjects[sessionID];
     // Note: sessionTree node is intentionally preserved for TUI flash
   });

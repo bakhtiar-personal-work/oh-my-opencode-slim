@@ -3,9 +3,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  deleteSessionEntries,
   getTuiStatePath,
   readTuiSnapshot,
   recordActiveSubscriptionForProvider,
+  recordSessionDone,
+  recordSessionNode,
   recordSessionUsage,
   recordSubscriptionUsage,
   recordTuiAgentModel,
@@ -272,6 +275,130 @@ describe('sessionUsage', () => {
     expect(usage?.reasoning).toBe(200);
     expect(usage?.cacheRead).toBe(2_500);
     expect(usage?.cacheWrite).toBe(700);
+  });
+
+  test('accumulates orchestration sigma from per-session deltas and persists across idle', () => {
+    recordSessionNode({
+      sessionID: 'orch',
+      title: 'orch',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'child-1',
+      title: 'child-1',
+      agent: 'explorer',
+      parentId: 'orch',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'child-2',
+      title: 'child-2',
+      agent: 'fixer',
+      parentId: 'orch',
+      status: 'busy',
+    });
+
+    recordSessionUsage({
+      sessionID: 'child-1',
+      contextUsed: 21_120,
+      input: 20_000,
+      output: 100,
+      reasoning: 20,
+      cacheRead: 1_000,
+      cacheWrite: 400,
+    });
+    recordSessionUsage({
+      sessionID: 'child-2',
+      contextUsed: 20_730,
+      input: 20_000,
+      output: 200,
+      reasoning: 30,
+      cacheRead: 500,
+      cacheWrite: 100,
+    });
+    recordSessionUsage({
+      sessionID: 'child-1',
+      contextUsed: 26_500,
+      input: 25_000,
+      output: 150,
+      reasoning: 50,
+      cacheRead: 1_300,
+      cacheWrite: 500,
+    });
+
+    // Simulate the orchestration becoming idle/completed.
+    recordSessionDone('child-1');
+    recordSessionDone('child-2');
+    recordSessionDone('orch');
+
+    // New child under the same orchestrator session should keep accumulating.
+    recordSessionNode({
+      sessionID: 'child-3',
+      title: 'child-3',
+      agent: 'oracle',
+      parentId: 'orch',
+      status: 'busy',
+    });
+    recordSessionUsage({
+      sessionID: 'child-3',
+      contextUsed: 20_810,
+      input: 20_000,
+      output: 100,
+      reasoning: 10,
+      cacheRead: 700,
+      cacheWrite: 200,
+    });
+
+    const snapshot = readTuiSnapshot();
+    expect(snapshot.orchestrationSigmaAccum.orch).toEqual({
+      contextUsed: 68_160,
+      input: 65_000,
+      output: 450,
+      cacheRead: 2_500,
+      cacheWrite: 800,
+    });
+    expect(snapshot.orchestrationUsageLastSeen['child-1']).toEqual({
+      contextUsed: 26_500,
+      input: 25_000,
+      output: 150,
+      cacheRead: 1_300,
+      cacheWrite: 500,
+    });
+  });
+
+  test('deleteSessionEntries clears last-seen and removes root sigma for orchestrator sessions', () => {
+    recordSessionNode({
+      sessionID: 'orch',
+      title: 'orch',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'child-1',
+      title: 'child-1',
+      agent: 'explorer',
+      parentId: 'orch',
+      status: 'busy',
+    });
+    recordSessionUsage({
+      sessionID: 'child-1',
+      contextUsed: 1_065,
+      input: 1_000,
+      output: 10,
+      reasoning: 5,
+      cacheRead: 50,
+      cacheWrite: 10,
+    });
+    expect(readTuiSnapshot().orchestrationSigmaAccum.orch).toBeDefined();
+
+    deleteSessionEntries('child-1');
+    expect(
+      readTuiSnapshot().orchestrationUsageLastSeen['child-1'],
+    ).toBeUndefined();
+
+    deleteSessionEntries('orch');
+    expect(readTuiSnapshot().orchestrationSigmaAccum.orch).toBeUndefined();
   });
 });
 
