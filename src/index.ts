@@ -157,6 +157,67 @@ function readTokenTelemetry(message: unknown): {
   };
 }
 
+// Model context limit cache: key = "providerID/modelID", value = context
+// limit. Populated lazily via ensureModelContextLimits().
+const _modelContextLimitCache = new Map<string, number>();
+let _modelLimitFetchPromise: Promise<void> | null = null;
+
+async function ensureModelContextLimits(client: {
+  provider: {
+    list: () => Promise<{
+      data?: { all?: Array<Record<string, unknown>> };
+    }>;
+  };
+}): Promise<void> {
+  if (_modelContextLimitCache.size > 0 || _modelLimitFetchPromise) {
+    await _modelLimitFetchPromise;
+    return;
+  }
+
+  _modelLimitFetchPromise = (async () => {
+    try {
+      const result = await client.provider.list();
+      const providers =
+        (result.data?.all as
+          | Array<{
+              id?: string;
+              models?: Record<
+                string,
+                { id?: string; limit?: { context?: number } }
+              >;
+            }>
+          | undefined) ?? [];
+      for (const provider of providers) {
+        if (!provider.models) continue;
+        for (const model of Object.values(provider.models)) {
+          if (
+            typeof model?.limit?.context === 'number' &&
+            model.limit.context > 0 &&
+            provider.id &&
+            model.id
+          ) {
+            _modelContextLimitCache.set(
+              `${provider.id}/${model.id}`,
+              model.limit.context,
+            );
+          }
+        }
+      }
+    } catch {
+      // Non-critical — cache stays empty, percentage shows 0
+    }
+  })();
+
+  return _modelLimitFetchPromise;
+}
+
+function getCachedContextLimit(
+  providerID: string,
+  modelID: string,
+): number | null {
+  return _modelContextLimitCache.get(`${providerID}/${modelID}`) ?? null;
+}
+
 /**
  * Probe jsdom at init time so the first webfetch call doesn't fail
  * silently. Logs a warning if jsdom can't be imported or instantiated,
@@ -355,29 +416,24 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           | undefined;
         if (!statuses) return;
 
-        // Write OpenCode statuses for sidebar diagnostic display
+        // Write OpenCode statuses for sidebar diagnostic display.
+        // Merge instead of replace: other OpenCode instances may have
+        // active sessions in this shared file.
         updateSnapshot((s) => {
-          s.sessionStatuses = {};
           for (const [sid, st] of Object.entries(statuses)) {
             s.sessionStatuses[sid] = st.type;
           }
         });
 
-        // Single source of truth: OpenCode's session list.
-        // Delete anything in our state that OpenCode no longer tracks.
+        // Only clean up sessions this instance's in-memory store knows
+        // about. OpenCode's session list is per-instance — sessions from
+        // other instances in the shared file are preserved.
         const opencodeIds = new Set(Object.keys(statuses));
         const snap = readTuiSnapshot();
 
-        // Collect stale IDs from both memory and file
+        // Collect stale IDs from in-memory store (per-instance) only
         const idsToDelete = new Set<string>();
         for (const sid of Object.keys(sessionTreeStore)) {
-          if (!opencodeIds.has(sid)) idsToDelete.add(sid);
-        }
-        for (const sid of Object.keys(snap.sessionTree)) {
-          if (sessionTreeStore[sid]) continue;
-          if (!opencodeIds.has(sid)) idsToDelete.add(sid);
-        }
-        for (const sid of Object.keys(snap.activeSessions)) {
           if (!opencodeIds.has(sid)) idsToDelete.add(sid);
         }
 
@@ -406,10 +462,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           deletingSessions.delete(sid);
         }
 
-        // Clean persisted file — single pass, no two-phase dance
+        // Clean shared file — only remove sessions this instance owned.
+        // Sessions from other instances are untouched.
         updateSnapshot((s) => {
           for (const sid of idsToDelete) {
-            delete s.sessionTree[sid];
+            // Preserve tree node for token aggregation - mark as idle instead of deleting
+            const node = s.sessionTree[sid];
+            if (node) {
+              node.status = 'idle';
+              node.finishedAt = Date.now();
+            }
             delete s.activeSessions[sid];
             delete s.sessionStatuses[sid];
             delete s.sessionModels[sid];
@@ -912,8 +974,71 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           sessionID?: string;
           error?: { name?: string };
           status?: { type: string };
+          part?: {
+            type?: string;
+            sessionID?: string;
+            tokens?: {
+              input?: number;
+              output?: number;
+              reasoning?: number;
+              cache?: { read?: number; write?: number };
+            };
+          };
+          providerID?: string;
+          modelID?: string;
         };
       };
+
+      // Handle streaming token updates from step-finish parts
+      if (event.type === 'message.part.updated') {
+        const part = event.properties?.part as
+          | {
+              type?: string;
+              sessionID?: string;
+              tokens?: {
+                input?: number;
+                output?: number;
+                reasoning?: number;
+                cache?: { read?: number; write?: number };
+              };
+            }
+          | undefined;
+
+        if (part?.type === 'step-finish' && part?.sessionID && part?.tokens) {
+          const input = part.tokens.input ?? 0;
+          const output = part.tokens.output ?? 0;
+          const reasoning = part.tokens.reasoning ?? 0;
+          const cacheRead = part.tokens.cache?.read ?? 0;
+          const cacheWrite = part.tokens.cache?.write ?? 0;
+
+          if (input > 0 || output > 0) {
+            // Use cached context limit (will be populated by message.updated
+            // handler)
+            const contextLimit =
+              getCachedContextLimit(
+                event.properties?.providerID ?? '',
+                event.properties?.modelID ?? '',
+              ) ?? 0;
+
+            // Don't update contextUsed during streaming - only cumulative
+            // I/O tokens; the completion handler tracks peak context.
+            const contextUsed = 0;
+            const contextPct = 0;
+
+            recordSessionUsage({
+              sessionID: part.sessionID,
+              contextUsed,
+              contextLimit,
+              contextPct,
+              input,
+              output,
+              reasoning,
+              cacheRead,
+              cacheWrite,
+            });
+          }
+        }
+      }
 
       if (event.type === 'message.updated') {
         const info = event.properties?.info;
@@ -939,55 +1064,80 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         const sessionID = info?.sessionID ?? event.properties?.sessionID;
         if (sessionID) {
           try {
-            const messageID =
-              typeof info?.id === 'string' ? info.id : undefined;
-            let telemetrySource: unknown | null = null;
+            // Fetch all messages for the session and sum tokens from all
+            // assistant messages to get the total context usage.
+            const messagesResult = await ctx.client.session.messages({
+              path: { id: sessionID },
+            });
+            const allMessages = Array.isArray(messagesResult.data)
+              ? messagesResult.data
+              : [];
+            const assistantMsgs = allMessages.filter(
+              (m) =>
+                (m as { info?: { role?: string } }).info?.role === 'assistant',
+            );
 
-            if (messageID) {
-              const messageResult = await ctx.client.session.message({
-                path: { id: sessionID, messageID },
-              });
-              telemetrySource = messageResult.data ?? null;
+            // Sum tokens across all assistant messages
+            let totalInput = 0;
+            let totalOutput = 0;
+            let totalReasoning = 0;
+            let totalCacheRead = 0;
+            let totalCacheWrite = 0;
+
+            for (const msg of assistantMsgs) {
+              const telemetry = readTokenTelemetry(msg);
+              if (telemetry) {
+                // Track peak input across all messages (not just last)
+                totalInput = Math.max(totalInput, telemetry.input);
+                // Sum cumulative outputs
+                totalOutput += telemetry.output;
+                totalReasoning += telemetry.reasoning;
+                totalCacheRead += telemetry.cacheRead;
+                totalCacheWrite += telemetry.cacheWrite;
+              }
             }
 
-            if (!readTokenTelemetry(telemetrySource)) {
-              const messagesResult = await ctx.client.session.messages({
-                path: { id: sessionID },
-              });
-              const messages = Array.isArray(messagesResult.data)
-                ? [...messagesResult.data]
-                : [];
-              telemetrySource =
-                messages.reverse().find((message) => {
-                  const role = (message as { info?: { role?: string } }).info
-                    ?.role;
-                  return role === 'assistant';
-                }) ?? null;
+            const contextUsed = totalInput;
+
+            // Resolve the model's context limit from provider
+            // configuration.
+            if (
+              typeof info?.providerID === 'string' &&
+              typeof info?.modelID === 'string'
+            ) {
+              ensureModelContextLimits(ctx.client).catch(() => {});
             }
 
-            const telemetry = readTokenTelemetry(telemetrySource);
-            if (telemetry) {
-              const contextUsed =
-                telemetry.input +
-                telemetry.output +
-                telemetry.reasoning +
-                telemetry.cacheRead +
-                telemetry.cacheWrite;
-              const contextPct =
-                telemetry.contextLimit > 0
-                  ? (contextUsed / telemetry.contextLimit) * 100
-                  : 0;
+            // Keep last message's telemetry for context limit fallback
+            const lastMsg = assistantMsgs[assistantMsgs.length - 1] ?? null;
+            const lastTelemetry = lastMsg ? readTokenTelemetry(lastMsg) : null;
 
+            const actualContextLimit =
+              typeof info?.providerID === 'string' &&
+              typeof info?.modelID === 'string'
+                ? (getCachedContextLimit(info.providerID, info.modelID) ??
+                  lastTelemetry?.contextLimit ??
+                  0)
+                : (lastTelemetry?.contextLimit ?? 0);
+
+            const contextPct =
+              actualContextLimit > 0
+                ? (contextUsed / actualContextLimit) * 100
+                : 0;
+
+            // Only record if we have actual token data (prevent overwriting
+            // with zeros)
+            if (contextUsed > 0 || totalInput > 0 || totalOutput > 0) {
               recordSessionUsage({
                 sessionID,
                 contextUsed,
-                contextLimit: telemetry.contextLimit,
+                contextLimit: actualContextLimit,
                 contextPct,
-                input: telemetry.input,
-                output: telemetry.output,
-                reasoning: telemetry.reasoning,
-                cacheRead: telemetry.cacheRead,
-                cacheWrite: telemetry.cacheWrite,
+                input: totalInput,
+                output: totalOutput,
+                reasoning: totalReasoning,
+                cacheRead: totalCacheRead,
+                cacheWrite: totalCacheWrite,
               });
             }
           } catch {
@@ -1131,7 +1281,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           sessionAgentMap.delete(sessionID);
           recordSessionEnd(sessionID);
           recordSessionDone(sessionID);
-          delete sessionTreeStore[sessionID];
           if (depthTracker) depthTracker.cleanup(sessionID);
           deletingSessions.delete(sessionID);
         }

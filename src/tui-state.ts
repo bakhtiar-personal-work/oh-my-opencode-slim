@@ -395,10 +395,23 @@ export function recordSessionUsage(input: {
   cacheWrite: number;
 }): void {
   updateSnapshot((snapshot) => {
+    const prev = snapshot.sessionUsage[input.sessionID];
+
+    // Preserve previous contextPct if new one is unreliable (0% due to
+    // uncached limit). This prevents flickering when streaming handler
+    // overwrites completion data.
+    const shouldPreservePct =
+      prev &&
+      input.contextPct === 0 &&
+      prev.contextPct > 0 &&
+      input.contextLimit === 0;
+
     snapshot.sessionUsage[input.sessionID] = {
-      contextUsed: Math.max(0, input.contextUsed),
+      contextUsed: Math.max(prev?.contextUsed ?? 0, input.contextUsed),
       contextLimit: Math.max(0, input.contextLimit),
-      contextPct: Math.max(0, Math.min(100, input.contextPct)),
+      contextPct: shouldPreservePct
+        ? prev.contextPct
+        : Math.max(0, Math.min(100, input.contextPct)),
       input: Math.max(0, input.input),
       output: Math.max(0, input.output),
       reasoning: Math.max(0, input.reasoning),

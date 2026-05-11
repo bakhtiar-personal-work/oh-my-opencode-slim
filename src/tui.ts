@@ -81,6 +81,11 @@ export function formatSidebarModelName(model: string): string {
   return lastSlash === -1 ? model : model.slice(lastSlash + 1);
 }
 
+export function formatAgentName(name: string): string {
+  if (name.length <= 16) return name;
+  return `${name.slice(0, 13)}...`;
+}
+
 export function formatSessionUsageRows(
   snapshot: TuiSnapshot,
   sessionID: string,
@@ -477,7 +482,7 @@ function renderSubscriptionPanel(
               ? `★ ${truncate(name, 18)}${providerLabel}`
               : `${truncate(name, 20)}${providerLabel}`,
           ]),
-          text({ fg: theme.textMuted }, [' ⚠']),
+          text({ fg: theme.textMuted }, [' ⚠️']),
         ]),
       );
       rows.push(
@@ -506,7 +511,7 @@ function renderSubscriptionPanel(
     } else {
       rows.push(
         text({ fg: '#F39C12' }, [
-          '  ⚠ Provider field missing - re-add account with /subscriptions',
+          '  ⚠️ Provider field missing - re-add account with /subscriptions',
         ]),
       );
     }
@@ -955,7 +960,7 @@ function renderSidebar(
       AGENT_SIDEBAR_DESCRIPTIONS[agentName] ??
       agentName;
     const indicatorColor = theme.accent;
-    const nameStr = truncate(agentName, 16);
+    const nameStr = formatAgentName(agentName);
     const descStr = truncate(desc, 12);
 
     agentRows.push(
@@ -976,7 +981,7 @@ function renderSidebar(
       ),
     );
 
-    const modelStr = truncate(model, 20).padEnd(8);
+    const modelStr = truncate(model, 16).padEnd(8);
     const statusText = getStatusText(snapshot, sessionID);
 
     agentRows.push(
@@ -990,7 +995,7 @@ function renderSidebar(
           text({ fg: theme.textMuted }, [
             `  ${modelStr}${variant ? ` - ${variant}` : ''}`,
           ]),
-          text({ fg: theme.textMuted }, [statusText]),
+          text({ fg: getStatusColor(statusText, theme) }, [statusText]),
         ],
       ),
     );
@@ -1039,8 +1044,8 @@ function renderSidebar(
         : 0;
       const flashDot = finished && Math.floor(elapsed / 200) % 2 === 0;
       const indicator = running ? spinner : flashDot ? '·' : ' ';
-      const nameStr = truncate(agentName, 16);
-      const modelStr = truncate(model, 20).padEnd(8);
+      const nameStr = formatAgentName(agentName);
+      const modelStr = truncate(model, 16).padEnd(8);
       const customStatusText = getStatusText(snapshot, sessionID);
 
       agentRows.push(
@@ -1071,7 +1076,9 @@ function renderSidebar(
             text({ fg: theme.textMuted }, [
               `  ${modelStr}${variant ? ` - ${variant}` : ''}`,
             ]),
-            text({ fg: theme.textMuted }, [customStatusText]),
+            text({ fg: getStatusColor(customStatusText, theme) }, [
+              customStatusText,
+            ]),
           ],
         ),
       );
@@ -1113,64 +1120,64 @@ function renderSidebar(
       ...agentRows,
       ...(orchestratingRows.length > 0
         ? [
-          box({ width: '100%', height: 1 }),
-          box(
-            {
-              width: '100%',
-              flexDirection: 'column',
-              border: BORDER,
-              borderColor: theme.borderActive,
-              paddingTop: 0,
-              paddingBottom: 0,
-              paddingLeft: 0,
-              paddingRight: 0,
-            },
-            [
-              box(
-                {
-                  width: '100%',
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                },
-                [
-                  text({ fg: theme.text }, ['Orchestrating']),
-                  text({ fg: theme.textMuted }, [
-                    `[${orchestratingRows[0] as string}]`,
-                  ]),
-                ],
-              ),
-              ...(orchestratingRows.slice(1) as Child[]),
-            ],
-          ),
-        ]
+            box({ width: '100%', height: 1 }),
+            box(
+              {
+                width: '100%',
+                flexDirection: 'column',
+                border: BORDER,
+                borderColor: theme.borderActive,
+                paddingTop: 0,
+                paddingBottom: 0,
+                paddingLeft: 0,
+                paddingRight: 0,
+              },
+              [
+                box(
+                  {
+                    width: '100%',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                  },
+                  [
+                    text({ fg: theme.text }, ['Orchestrating']),
+                    text({ fg: theme.textMuted }, [
+                      `[${orchestratingRows[0] as string}]`,
+                    ]),
+                  ],
+                ),
+                ...(orchestratingRows.slice(1) as Child[]),
+              ],
+            ),
+          ]
         : []),
       ...(usageRows.length > 0
         ? [
-          box({ width: '100%', height: 1 }),
-          box(
-            {
-              width: '100%',
-              flexDirection: 'column',
-              border: BORDER,
-              borderColor: theme.borderActive,
-              paddingTop: 0,
-              paddingBottom: 0,
-              paddingLeft: 0,
-              paddingRight: 0,
-            },
-            [
-              box(
-                {
-                  width: '100%',
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                },
-                [text({ fg: theme.text }, ['API Usage'])],
-              ),
-              ...(usageRows as Child[]),
-            ],
-          ),
-        ]
+            box({ width: '100%', height: 1 }),
+            box(
+              {
+                width: '100%',
+                flexDirection: 'column',
+                border: BORDER,
+                borderColor: theme.borderActive,
+                paddingTop: 0,
+                paddingBottom: 0,
+                paddingLeft: 0,
+                paddingRight: 0,
+              },
+              [
+                box(
+                  {
+                    width: '100%',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                  },
+                  [text({ fg: theme.text }, ['API Usage'])],
+                ),
+                ...(usageRows as Child[]),
+              ],
+            ),
+          ]
         : []),
     ],
   );
