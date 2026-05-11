@@ -372,6 +372,8 @@ export function pruneStaleTuiSessionBundles(
 
   const projectMatched = normalizeProjectDirectory(input.currentProjectDir);
 
+  // Only compare against OpenCode's id list when non-empty. Reconciliation
+  // skips when session.status is `{}` (cannot treat as authoritative).
   if (input.opencodeIds.size > 0) {
     for (const rootId of [...Object.keys(snapshot.sessions)]) {
       const bundle = snapshot.sessions[rootId];
@@ -923,16 +925,40 @@ export function deleteSessionEntries(sessionID: string): void {
     const located = locateBundleForSession(snapshot, sessionID);
     if (!located) return;
     const { bundle, rootId } = located;
-    const node = bundle.tree[sessionID] ?? sessionTreeStore[sessionID];
+
     delete bundle.orchestrationUsageLastSeen[sessionID];
-    if (node) {
-      delete node.usage;
-      node.model = '';
-      delete node.variant;
+
+    // Root bundle key removed — drop entire orchestration snapshot for this tree.
+    if (sessionID === rootId) {
+      for (const id of deleteBundleCascade(snapshot, rootId)) {
+        delete sessionTreeStore[id];
+      }
+      return;
     }
-    if (node?.agent === 'orchestrator' && sessionID === rootId) {
-      delete bundle.orchestrationSigmaAccum;
+
+    const node = bundle.tree[sessionID];
+    const parentId = node?.parentId;
+    delete bundle.tree[sessionID];
+    delete sessionTreeStore[sessionID];
+
+    if (parentId) {
+      const parent = bundle.tree[parentId];
+      if (parent) {
+        parent.childIds = parent.childIds.filter((c) => c !== sessionID);
+      }
+      const storeParent = sessionTreeStore[parentId];
+      if (storeParent?.childIds) {
+        storeParent.childIds = storeParent.childIds.filter(
+          (c) => c !== sessionID,
+        );
+      }
     }
+
+    if (Object.keys(bundle.tree).length === 0) {
+      delete snapshot.sessions[rootId];
+      return;
+    }
+
     touchBundle(bundle);
   });
 }

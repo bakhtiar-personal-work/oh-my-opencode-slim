@@ -493,6 +493,9 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     sessionAgentMap = new Map<string, string>();
     deletingSessions = new Set<string>();
 
+    // Sync tui-state with OpenCode's session snapshot. Prefer running after the
+    // user submits (`experimental.chat.messages.transform`) rather than plugin
+    // init so session.status tends to enumerate active sessions reliably.
     reconcileSessions = async (): Promise<void> => {
       try {
         const result = await ctx.client.session.status({});
@@ -500,6 +503,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           | Record<string, { type: string }>
           | undefined;
         if (!statuses) return;
+        // An empty status map cannot distinguish "nothing running" from
+        // transient/incomplete enumeration. Treating {} as authoritative
+        // cleared every snapshot bundle for this cwd and tore down the
+        // entire sessionTreeStore (see instanceSeeds below).
         if (Object.keys(statuses).length === 0) return;
 
         const opencodeIds = new Set(Object.keys(statuses));
@@ -655,10 +662,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       appLog(ctx, 'warn', msg).catch(() => {});
     }
   });
-
-  // ── Reconcile tracking state with OpenCode's actual sessions ───────
-  // Startup sync cleans remnants from previous runs/crashes.
-  reconcileSessions().catch(() => {});
 
   return {
     name: 'oh-my-opencode-slim',
@@ -1517,6 +1520,14 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           }>;
         }>;
       };
+
+      if (
+        typedOutput.messages.some((message) => message.info.role === 'user')
+      ) {
+        // After the user submits, session.status reliably reflects OpenCode —
+        // better than reconciling once at startup (empty/partial snapshots).
+        reconcileSessions().catch(() => {});
+      }
 
       for (const message of typedOutput.messages) {
         if (message.info.role !== 'user') {

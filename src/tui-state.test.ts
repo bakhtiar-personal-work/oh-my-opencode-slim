@@ -340,7 +340,7 @@ describe('sessionUsage', () => {
     });
   });
 
-  test('deleteSessionEntries clears last-seen and removes root sigma for orchestrator sessions', () => {
+  test('deleteSessionEntries removes child nodes from tree and cascades bundle on root delete', () => {
     recordSessionNode({
       sessionID: 'orch',
       title: 'orch',
@@ -371,11 +371,14 @@ describe('sessionUsage', () => {
     expect(
       readTuiSnapshot().sessions.orch?.orchestrationUsageLastSeen['child-1'],
     ).toBeUndefined();
-
-    deleteSessionEntries('orch');
+    expect(readTuiSnapshot().sessions.orch?.tree['child-1']).toBeUndefined();
+    expect(readTuiSnapshot().sessions.orch?.tree.orch?.childIds).toEqual([]);
     expect(
       readTuiSnapshot().sessions.orch?.orchestrationSigmaAccum,
-    ).toBeUndefined();
+    ).toBeDefined();
+
+    deleteSessionEntries('orch');
+    expect(readTuiSnapshot().sessions.orch).toBeUndefined();
   });
 });
 
@@ -433,7 +436,7 @@ describe('pruneStaleTuiSessionBundles', () => {
     expect(readTuiSnapshot().sessions['root-x']).toBeDefined();
   });
 
-  test('does not remove bundle when opencodeIds is empty', () => {
+  test('does not remove bundles when opencodeIds is empty', () => {
     const projectDir = normalizeProjectDirectory(tempDir);
     recordSessionProject({ sessionID: 'root-k', projectPath: tempDir });
     recordSessionNode({
