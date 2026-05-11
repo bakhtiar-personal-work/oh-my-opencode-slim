@@ -50,9 +50,13 @@ export function createDelegateTools(
       mode,
     });
     updateSnapshot((snapshot) => {
-      const parent = snapshot.sessionTree[parentSessionId];
-      if (parent && !parent.childIds.includes(sessionId)) {
-        parent.childIds.push(sessionId);
+      for (const bundle of Object.values(snapshot.sessions)) {
+        const parent = bundle.tree[parentSessionId];
+        if (!parent) continue;
+        if (!parent.childIds.includes(sessionId)) {
+          parent.childIds.push(sessionId);
+        }
+        bundle.lastActivityAt = Date.now();
       }
     });
     const storeParent = sessionTreeStore[parentSessionId];

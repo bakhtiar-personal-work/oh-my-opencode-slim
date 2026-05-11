@@ -5,16 +5,19 @@ import * as path from 'node:path';
 import {
   deleteSessionEntries,
   getTuiStatePath,
+  mergedSessionUsage,
+  normalizeProjectDirectory,
+  pruneStaleTuiSessionBundles,
   readTuiSnapshot,
   recordActiveSubscriptionForProvider,
   recordSessionDone,
   recordSessionNode,
+  recordSessionProject,
   recordSessionUsage,
   recordSubscriptionUsage,
-  recordTuiAgentModel,
-  recordTuiAgentModels,
   removeSubscriptionUsageEntry,
   subscriptionUsageKey,
+  updateSnapshot,
 } from './tui-state';
 
 let previousXdgDataHome: string | undefined;
@@ -34,43 +37,6 @@ afterEach(() => {
   }
 
   fs.rmSync(tempDir, { recursive: true, force: true });
-});
-
-describe('tui-state persistence', () => {
-  test('persists enabled agent models', () => {
-    recordTuiAgentModels({
-      agentModels: {
-        explorer: 'openai/gpt-5.4-mini',
-        fixer: 'openai/gpt-5.4-mini',
-      },
-    });
-
-    const snapshot = readTuiSnapshot();
-
-    expect(snapshot.agentModels).toEqual({
-      explorer: 'openai/gpt-5.4-mini',
-      fixer: 'openai/gpt-5.4-mini',
-    });
-  });
-
-  test('updates a single live agent model without dropping others', () => {
-    recordTuiAgentModels({
-      agentModels: {
-        orchestrator: 'default',
-        explorer: 'openai/gpt-5.4-mini',
-      },
-    });
-
-    recordTuiAgentModel({
-      agentName: 'orchestrator',
-      model: 'openai/gpt-5.5',
-    });
-
-    expect(readTuiSnapshot().agentModels).toEqual({
-      orchestrator: 'openai/gpt-5.5',
-      explorer: 'openai/gpt-5.4-mini',
-    });
-  });
 });
 
 describe('subscriptionUsage', () => {
@@ -244,7 +210,12 @@ describe('activeSubscriptionByProvider', () => {
   test('recordActiveSubscriptionForProvider survives other snapshot updates', () => {
     recordActiveSubscriptionForProvider('opencode-go', 'personal');
     // Write some other data — shouldn't affect active provider selection
-    recordTuiAgentModel({ agentName: 'explorer', model: 'test-model' });
+    recordSessionNode({
+      sessionID: 'sess-x',
+      title: '',
+      agent: 'explorer',
+      status: 'busy',
+    });
     expect(readTuiSnapshot().activeSubscriptionByProvider['opencode-go']).toBe(
       'personal',
     );
@@ -265,7 +236,7 @@ describe('sessionUsage', () => {
       cacheWrite: 700,
     });
 
-    const usage = readTuiSnapshot().sessionUsage['session-123'];
+    const usage = mergedSessionUsage(readTuiSnapshot())['session-123'];
     expect(usage).toBeDefined();
     expect(usage?.contextUsed).toBe(150_000);
     expect(usage?.contextLimit).toBe(400_000);
@@ -351,14 +322,16 @@ describe('sessionUsage', () => {
     });
 
     const snapshot = readTuiSnapshot();
-    expect(snapshot.orchestrationSigmaAccum.orch).toEqual({
-      contextUsed: 68_160,
+    expect(snapshot.sessions.orch?.orchestrationSigmaAccum).toEqual({
+      contextUsed: 68_040,
       input: 65_000,
       output: 450,
       cacheRead: 2_500,
       cacheWrite: 800,
     });
-    expect(snapshot.orchestrationUsageLastSeen['child-1']).toEqual({
+    expect(
+      snapshot.sessions.orch?.orchestrationUsageLastSeen['child-1'],
+    ).toEqual({
       contextUsed: 26_500,
       input: 25_000,
       output: 150,
@@ -390,15 +363,138 @@ describe('sessionUsage', () => {
       cacheRead: 50,
       cacheWrite: 10,
     });
-    expect(readTuiSnapshot().orchestrationSigmaAccum.orch).toBeDefined();
+    expect(
+      readTuiSnapshot().sessions.orch?.orchestrationSigmaAccum,
+    ).toBeDefined();
 
     deleteSessionEntries('child-1');
     expect(
-      readTuiSnapshot().orchestrationUsageLastSeen['child-1'],
+      readTuiSnapshot().sessions.orch?.orchestrationUsageLastSeen['child-1'],
     ).toBeUndefined();
 
     deleteSessionEntries('orch');
-    expect(readTuiSnapshot().orchestrationSigmaAccum.orch).toBeUndefined();
+    expect(
+      readTuiSnapshot().sessions.orch?.orchestrationSigmaAccum,
+    ).toBeUndefined();
+  });
+});
+
+describe('pruneStaleTuiSessionBundles', () => {
+  test('removes bundle when every tree id is absent from OpenCode and project matches', () => {
+    const projectDir = normalizeProjectDirectory(tempDir);
+    recordSessionProject({ sessionID: 'root-del', projectPath: tempDir });
+    recordSessionNode({
+      sessionID: 'root-del',
+      title: '',
+      agent: 'orchestrator',
+      status: 'idle',
+    });
+    recordSessionNode({
+      sessionID: 'child-del',
+      title: '',
+      agent: 'explorer',
+      parentId: 'root-del',
+      status: 'idle',
+    });
+
+    expect(readTuiSnapshot().sessions['root-del']).toBeDefined();
+
+    updateSnapshot((s) => {
+      pruneStaleTuiSessionBundles(s, {
+        opencodeIds: new Set(['ses_still_live']),
+        currentProjectDir: projectDir,
+        now: Date.now(),
+      });
+    });
+
+    expect(readTuiSnapshot().sessions['root-del']).toBeUndefined();
+  });
+
+  test('keeps bundle when project path does not match workspace', () => {
+    const otherDir = path.join(tempDir, 'other-ws');
+    fs.mkdirSync(otherDir, { recursive: true });
+    const workspaceDir = normalizeProjectDirectory(tempDir);
+    recordSessionProject({ sessionID: 'root-x', projectPath: otherDir });
+    recordSessionNode({
+      sessionID: 'root-x',
+      title: '',
+      agent: 'orchestrator',
+      status: 'idle',
+    });
+
+    updateSnapshot((s) => {
+      pruneStaleTuiSessionBundles(s, {
+        opencodeIds: new Set(['nostale']),
+        currentProjectDir: workspaceDir,
+        now: Date.now(),
+      });
+    });
+
+    expect(readTuiSnapshot().sessions['root-x']).toBeDefined();
+  });
+
+  test('does not remove bundle when opencodeIds is empty', () => {
+    const projectDir = normalizeProjectDirectory(tempDir);
+    recordSessionProject({ sessionID: 'root-k', projectPath: tempDir });
+    recordSessionNode({
+      sessionID: 'root-k',
+      title: '',
+      agent: 'orchestrator',
+      status: 'idle',
+    });
+
+    updateSnapshot((s) => {
+      pruneStaleTuiSessionBundles(s, {
+        opencodeIds: new Set(),
+        currentProjectDir: projectDir,
+        now: Date.now(),
+      });
+    });
+
+    expect(readTuiSnapshot().sessions['root-k']).toBeDefined();
+  });
+
+  test('soft-prunes subtree when only some ids are missing from OpenCode', () => {
+    const projectDir = normalizeProjectDirectory(tempDir);
+    recordSessionProject({ sessionID: 'root-p', projectPath: tempDir });
+    recordSessionNode({
+      sessionID: 'root-p',
+      title: '',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'gone-child',
+      title: '',
+      agent: 'explorer',
+      parentId: 'root-p',
+      status: 'busy',
+    });
+    recordSessionUsage({
+      sessionID: 'gone-child',
+      contextUsed: 100,
+      contextLimit: 400,
+      contextPct: 25,
+      input: 10,
+      output: 5,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    });
+
+    updateSnapshot((s) => {
+      pruneStaleTuiSessionBundles(s, {
+        opencodeIds: new Set(['root-p']),
+        currentProjectDir: projectDir,
+        now: Date.now(),
+      });
+    });
+
+    const snap = readTuiSnapshot();
+    expect(snap.sessions['root-p']).toBeDefined();
+    const gone = snap.sessions['root-p']?.tree['gone-child'];
+    expect(gone?.status).toBe('idle');
+    expect(gone?.usage).toBeUndefined();
   });
 });
 
@@ -408,7 +504,12 @@ describe('tui-state file safety', () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, '{ malformed json');
 
-    recordTuiAgentModel({ agentName: 'explorer', model: 'test-model' });
+    recordSessionNode({
+      sessionID: 'sess-x',
+      title: '',
+      agent: 'explorer',
+      status: 'busy',
+    });
 
     expect(fs.readFileSync(filePath, 'utf8')).toBe('{ malformed json');
   });

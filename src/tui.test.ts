@@ -8,50 +8,51 @@ import {
   formatTokenAbbrevDecimal,
   getSidebarAgentNames,
 } from './tui';
-import type { TuiSnapshot } from './tui-state';
+import type {
+  SessionUsageEntry,
+  TuiSessionBundle,
+  TuiSnapshot,
+} from './tui-state';
 
-function createSnapshot(agentModels: TuiSnapshot['agentModels']): TuiSnapshot {
+function bundleFixture(
+  rootSessionId: string,
+  overrides: Partial<TuiSessionBundle> & Pick<TuiSessionBundle, 'tree'>,
+): TuiSessionBundle {
   return {
-    version: 1,
+    rootSessionId,
+    lastActivityAt: overrides.lastActivityAt ?? 0,
+    projectPath: overrides.projectPath,
+    tree: overrides.tree,
+    orchestrationSigmaAccum: overrides.orchestrationSigmaAccum,
+    orchestrationUsageLastSeen: overrides.orchestrationUsageLastSeen ?? {},
+  };
+}
+
+function createSnapshot(): TuiSnapshot {
+  return {
+    version: 6,
     updatedAt: 0,
-    agentModels,
-    agentDetails: {},
-    activeSessions: {},
-    orchestratorLastActive: 0,
-    agentFinishedAt: {},
-    sessionModels: {},
-    sessionVariants: {},
-    sessionFinished: {},
-    sessionTree: {},
-    sessionStatuses: {},
-    sessionUsage: {},
-    orchestrationSigmaAccum: {},
-    orchestrationUsageLastSeen: {},
-    sessionProjects: {},
+    sessions: {},
     subscriptionUsage: {},
     activeSubscriptionByProvider: {},
   };
 }
 
 describe('tui sidebar agents', () => {
-  test('hides disabled agents when models are persisted explicitly', () => {
-    const agentNames = getSidebarAgentNames(
-      createSnapshot({
-        explorer: 'openai/gpt-5.4-mini',
-        fixer: 'openai/gpt-5.4-mini',
-      }),
-    );
-
-    expect(agentNames).toEqual(['explorer', 'fixer']);
-    expect(agentNames).not.toContain('librarian');
-  });
-
-  test('uses default-enabled fallback before models are persisted', () => {
-    const agentNames = getSidebarAgentNames(createSnapshot({}));
+  test('lists agents that have sidebar description entries', () => {
+    const agentNames = getSidebarAgentNames(createSnapshot());
 
     expect(agentNames).toContain('explorer');
     expect(agentNames).toContain('fixer');
+    expect(agentNames).toContain('orchestrator');
     expect(agentNames).not.toContain('nonexistent-agent');
+  });
+
+  test('sorts sidebar agents using AGENT_SORT_PRIORITY', () => {
+    const agentNames = getSidebarAgentNames(createSnapshot());
+    expect(agentNames.indexOf('orchestrator')).toBeLessThan(
+      agentNames.indexOf('explorer'),
+    );
   });
 });
 
@@ -117,25 +118,37 @@ describe('orchestrating usage metrics formatters', () => {
   });
 
   test('formats context/input/output/cache rows for a session', () => {
-    const snapshot = createSnapshot({});
-    snapshot.sessionUsage['session-1'] = {
-      contextUsed: 150_000,
-      contextLimit: 400_000,
-      contextPct: 38,
-      input: 8_000,
-      output: 900,
-      reasoning: 200,
-      cacheRead: 200,
-      cacheWrite: 300,
-      updatedAt: 0,
-    };
+    const snapshot = createSnapshot();
+    snapshot.sessions['session-1'] = bundleFixture('session-1', {
+      tree: {
+        'session-1': {
+          title: '',
+          agent: 'explorer',
+          model: '',
+          childIds: [],
+          status: 'busy',
+          createdAt: 0,
+          usage: {
+            contextUsed: 150_000,
+            contextLimit: 400_000,
+            contextPct: 38,
+            input: 8_000,
+            output: 900,
+            reasoning: 200,
+            cacheRead: 200,
+            cacheWrite: 300,
+            updatedAt: 0,
+          },
+        },
+      },
+    });
 
     expect(formatSessionUsageRows(snapshot, 'session-1')).toEqual({
       contextPct: 38,
       ctxLabel: 'CTX',
       ctxValue: '150,000/400,000 (38%)',
       ioInputAbbrev: '8K',
-      ioOutputAbbrev: '1K',
+      ioOutputAbbrev: '900',
       cacheLabel: 'CACHE',
       cacheValue: '500',
       cacheReadAbbrev: '200',
@@ -144,18 +157,30 @@ describe('orchestrating usage metrics formatters', () => {
   });
 
   test('formats context with different abbreviation styles when abbreviateLeft is true', () => {
-    const snapshot = createSnapshot({});
-    snapshot.sessionUsage['session-1'] = {
-      contextUsed: 150_000,
-      contextLimit: 400_000,
-      contextPct: 38,
-      input: 8_000,
-      output: 900,
-      reasoning: 200,
-      cacheRead: 200,
-      cacheWrite: 300,
-      updatedAt: 0,
-    };
+    const snapshot = createSnapshot();
+    snapshot.sessions['session-1'] = bundleFixture('session-1', {
+      tree: {
+        'session-1': {
+          title: '',
+          agent: 'explorer',
+          model: '',
+          childIds: [],
+          status: 'busy',
+          createdAt: 0,
+          usage: {
+            contextUsed: 150_000,
+            contextLimit: 400_000,
+            contextPct: 38,
+            input: 8_000,
+            output: 900,
+            reasoning: 200,
+            cacheRead: 200,
+            cacheWrite: 300,
+            updatedAt: 0,
+          },
+        },
+      },
+    });
 
     expect(
       formatSessionUsageRows(snapshot, 'session-1', { abbreviateLeft: true }),
@@ -164,7 +189,7 @@ describe('orchestrating usage metrics formatters', () => {
       ctxLabel: 'CTX',
       ctxValue: '150.0K/400K (38%)',
       ioInputAbbrev: '8K',
-      ioOutputAbbrev: '1K',
+      ioOutputAbbrev: '900',
       cacheLabel: 'CACHE',
       cacheValue: '500',
       cacheReadAbbrev: '200',
@@ -173,8 +198,40 @@ describe('orchestrating usage metrics formatters', () => {
   });
 
   test('aggregates totals across orchestrator and descendants', () => {
-    const snapshot = createSnapshot({});
-    snapshot.sessionTree = {
+    const orchUsage: SessionUsageEntry = {
+      contextUsed: 0,
+      contextLimit: 0,
+      contextPct: 0,
+      input: 1_000,
+      output: 200,
+      reasoning: 50,
+      cacheRead: 100,
+      cacheWrite: 20,
+      updatedAt: 0,
+    };
+    const childAUsage: SessionUsageEntry = {
+      contextUsed: 0,
+      contextLimit: 0,
+      contextPct: 0,
+      input: 2_000,
+      output: 400,
+      reasoning: 80,
+      cacheRead: 300,
+      cacheWrite: 40,
+      updatedAt: 0,
+    };
+    const childBUsage: SessionUsageEntry = {
+      contextUsed: 0,
+      contextLimit: 0,
+      contextPct: 0,
+      input: 500,
+      output: 120,
+      reasoning: 30,
+      cacheRead: 50,
+      cacheWrite: 10,
+      updatedAt: 0,
+    };
+    const tree = {
       orch: {
         title: 'orch',
         agent: 'orchestrator',
@@ -182,6 +239,7 @@ describe('orchestrating usage metrics formatters', () => {
         childIds: [],
         status: 'busy',
         createdAt: 0,
+        usage: orchUsage,
       },
       childA: {
         title: 'childA',
@@ -191,6 +249,7 @@ describe('orchestrating usage metrics formatters', () => {
         childIds: [],
         status: 'busy',
         createdAt: 0,
+        usage: childAUsage,
       },
       childB: {
         title: 'childB',
@@ -200,52 +259,20 @@ describe('orchestrating usage metrics formatters', () => {
         childIds: [],
         status: 'busy',
         createdAt: 0,
+        usage: childBUsage,
       },
     };
-    snapshot.sessionUsage = {
-      orch: {
-        contextUsed: 0,
-        contextLimit: 0,
-        contextPct: 0,
-        input: 1_000,
-        output: 200,
-        reasoning: 50,
-        cacheRead: 100,
-        cacheWrite: 20,
-        updatedAt: 0,
-      },
-      childA: {
-        contextUsed: 0,
-        contextLimit: 0,
-        contextPct: 0,
-        input: 2_000,
-        output: 400,
-        reasoning: 80,
-        cacheRead: 300,
-        cacheWrite: 40,
-        updatedAt: 0,
-      },
-      childB: {
-        contextUsed: 0,
-        contextLimit: 0,
-        contextPct: 0,
-        input: 500,
-        output: 120,
-        reasoning: 30,
-        cacheRead: 50,
-        cacheWrite: 10,
-        updatedAt: 0,
-      },
-    };
-    snapshot.orchestrationSigmaAccum = {
-      orch: {
+    const snapshot = createSnapshot();
+    snapshot.sessions.orch = bundleFixture('orch', {
+      tree,
+      orchestrationSigmaAccum: {
         contextUsed: 15_200,
         input: 12_000,
         output: 2_000,
         cacheRead: 800,
         cacheWrite: 120,
       },
-    };
+    });
 
     expect(aggregateOrchestrationUsage(snapshot, 'orch')).toEqual({
       inputTotal: 12_000,

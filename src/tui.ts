@@ -3,10 +3,15 @@ import type { JSX } from '@opentui/solid';
 import { createElement, insert, setProp } from '@opentui/solid';
 import { createSignal } from 'solid-js';
 import { AGENT_SIDEBAR_DESCRIPTIONS } from './agents/descriptions';
-import { SUBAGENT_NAMES } from './config/constants';
-import type { NeuralwattUsageEntry } from './subscriptions/types';
+import type {
+  NeuralwattUsage,
+  NeuralwattUsageEntry,
+} from './subscriptions/types';
 import type { SubscriptionUsageEntry } from './tui-state';
 import {
+  mergedOrchestrationSigmaAccum,
+  mergedSessionTree,
+  mergedSessionUsage,
   readTuiSnapshot,
   readTuiSnapshotAsync,
   type SessionNode,
@@ -14,7 +19,6 @@ import {
 } from './tui-state';
 
 const PLUGIN_NAME = 'oh-my-opencode-slim';
-const FALLBACK_SIDEBAR_AGENTS: string[] = [...SUBAGENT_NAMES];
 const BORDER = { type: 'single' };
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -123,7 +127,7 @@ export function formatSessionUsageRows(
   cacheWriteAbbrev: string;
 } {
   const abbreviateLeft = options?.abbreviateLeft ?? false;
-  const usage = snapshot.sessionUsage?.[sessionID];
+  const usage = mergedSessionUsage(snapshot)[sessionID];
   const contextUsed = usage?.contextUsed ?? 0;
   const contextLimit = usage?.contextLimit ?? 0;
   const contextPct = Math.round(usage?.contextPct ?? 0);
@@ -157,7 +161,7 @@ export function aggregateOrchestrationUsage(
   cacheWrite: number;
   contextUsed: number;
 } {
-  const accum = snapshot.orchestrationSigmaAccum?.[rootSessionID];
+  const accum = mergedOrchestrationSigmaAccum(snapshot)[rootSessionID];
   if (!accum) {
     return {
       inputTotal: 0,
@@ -177,15 +181,14 @@ export function aggregateOrchestrationUsage(
 }
 
 export function getSidebarAgentNames(snapshot: TuiSnapshot): string[] {
-  const details = snapshot.agentDetails ?? {};
-  const models = snapshot.agentModels ?? {};
-  const configuredAgents =
-    Object.keys(details).length > 0
-      ? Object.keys(details)
-      : Object.keys(models);
-  return configuredAgents.length > 0
-    ? configuredAgents
-    : FALLBACK_SIDEBAR_AGENTS;
+  void snapshot;
+  const names = Object.keys(AGENT_SIDEBAR_DESCRIPTIONS);
+  return names.sort((a, b) => {
+    const pa = AGENT_SORT_PRIORITY[a] ?? 99;
+    const pb = AGENT_SORT_PRIORITY[b] ?? 99;
+    if (pa !== pb) return pa - pb;
+    return a.localeCompare(b);
+  });
 }
 
 function formatUsageTime(iso: string): string {
@@ -200,6 +203,26 @@ function formatUsageTime(iso: string): string {
   }
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+}
+
+/** Neuralwatt token counts: integer with grouping (e.g. 66,837,723), no K/M/B shorthand. */
+function neuralwattTokensFormatted(tokens: number): string {
+  if (!Number.isFinite(tokens)) return '0';
+  return Math.trunc(tokens).toLocaleString('en-US');
+}
+
+function pushNeuralwattMonthlyTokensRow(
+  rows: Child[],
+  theme: { textMuted: unknown },
+  u: NeuralwattUsage,
+): void {
+  rows.push(
+    box({ width: '100%', flexDirection: 'row' }, [
+      text({ fg: theme.textMuted }, [
+        `   ${neuralwattTokensFormatted(u.current_month.tokens)} Tokens this month`,
+      ]),
+    ]),
+  );
 }
 
 const BAR_WIDTH = 18;
@@ -341,6 +364,7 @@ function renderNeuralwattUsage(
         ],
       ),
     );
+    pushNeuralwattMonthlyTokensRow(rows, theme, u);
   } else if (subscription && subscription.status !== 'active') {
     // Non-active subscription (canceling, past_due, paused, trialing)
     const statusColor =
@@ -416,6 +440,7 @@ function renderNeuralwattUsage(
         ),
       );
     }
+    pushNeuralwattMonthlyTokensRow(rows, theme, u);
   } else {
     // No subscription (credit-only): show credits and monthly usage
     rows.push(
@@ -449,6 +474,7 @@ function renderNeuralwattUsage(
         ],
       ),
     );
+    pushNeuralwattMonthlyTokensRow(rows, theme, u);
   }
 }
 
@@ -531,7 +557,7 @@ function renderSubscriptionPanel(
 const FLASH_DURATION_MS = 2000;
 
 function getStatusText(snapshot: TuiSnapshot, sessionID: string): string {
-  return snapshot.sessionStatuses?.[sessionID] ?? '-';
+  return mergedSessionTree(snapshot)[sessionID]?.status ?? '-';
 }
 
 function getStatusWithDuration(
@@ -617,7 +643,8 @@ function buildOrchestratingRows(
   },
   durationNow: number,
 ): [string, ...Child[]] {
-  const tree = snapshot.sessionTree;
+  const tree = mergedSessionTree(snapshot);
+  const usageBySession = mergedSessionUsage(snapshot);
   const spinner = getSpinnerChar(now);
   const isVisibleSession = (node: SessionNode): boolean => {
     if (node.status === 'busy' || node.status === 'retry') return true;
@@ -637,7 +664,7 @@ function buildOrchestratingRows(
     const metrics = formatSessionUsageRows(snapshot, sessionID, {
       abbreviateLeft,
     });
-    const isChild = !!snapshot.sessionTree?.[sessionID]?.parentId;
+    const isChild = !!tree[sessionID]?.parentId;
 
     if (isChild) {
       // Child session: 4-row vertical stack (after tree header + model).
@@ -649,8 +676,8 @@ function buildOrchestratingRows(
         ]),
       );
       const cacheTotalForRow =
-        (snapshot.sessionUsage?.[sessionID]?.cacheRead ?? 0) +
-        (snapshot.sessionUsage?.[sessionID]?.cacheWrite ?? 0);
+        (usageBySession[sessionID]?.cacheRead ?? 0) +
+        (usageBySession[sessionID]?.cacheWrite ?? 0);
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
           text({ fg: theme.accent }, [`${prefix}${metrics.cacheLabel} `]),
@@ -755,10 +782,9 @@ function buildOrchestratingRows(
     const totals = aggregateOrchestrationUsage(snapshot, sessionID);
     const totalIo = totals.contextUsed;
     const totalCache = totals.cacheRead + totals.cacheWrite;
-    const isChild = !!snapshot.sessionTree?.[sessionID]?.parentId;
+    const isChild = !!tree[sessionID]?.parentId;
 
     if (isChild) {
-      // Child session: Σ TOTAL | Σ CACHE | Input/Output | Read/Write
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
           text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ TOTAL `]),
@@ -924,8 +950,7 @@ function buildOrchestratingRows(
         child,
         durationNow,
       );
-      const childVariant =
-        child.variant ?? snapshot.agentDetails?.[child.agent]?.variant;
+      const childVariant = child.variant;
       const detailPrefix = `${indentPrefix}${pipeChar}    `;
 
       rows.push(
@@ -995,8 +1020,7 @@ function buildOrchestratingRows(
         ],
       ),
     );
-    const orchVariant =
-      orchNode.variant ?? snapshot.agentDetails?.orchestrator?.variant;
+    const orchVariant = orchNode.variant;
     const orchStatusText = getStatusText(snapshot, orchId);
     rows.push(
       box(
@@ -1025,8 +1049,9 @@ function buildOrchestratingRows(
 
 function getActiveSessions(snapshot: TuiSnapshot, now: number): SessionEntry[] {
   const entries: SessionEntry[] = [];
+  const tree = mergedSessionTree(snapshot);
 
-  for (const [sessionID, node] of Object.entries(snapshot.sessionTree ?? {})) {
+  for (const [sessionID, node] of Object.entries(tree)) {
     const agentName = node.agent;
     if (!agentName) continue;
 
@@ -1037,7 +1062,6 @@ function getActiveSessions(snapshot: TuiSnapshot, now: number): SessionEntry[] {
       // Show spinner (running: true) while any child is still visible.
       let running = false;
       if (agentName === 'orchestrator') {
-        const tree = snapshot.sessionTree ?? {};
         const hasVisibleChildren = Object.entries(tree).some(
           ([_cid, cnode]) =>
             cnode.parentId === sessionID &&
@@ -1077,6 +1101,7 @@ function renderSidebar(
   startWallTime: number,
 ): JSX.Element {
   const now = Date.now();
+  const mergedTreeSidebar = mergedSessionTree(snapshot);
   const durationNow = startWallTime + secondTick * 1000;
   const sessions = getActiveSessions(snapshot, now);
   const totalActive = sessions.filter((s) => s.running).length;
@@ -1110,15 +1135,9 @@ function renderSidebar(
   const ourGroups = new Map<string, SessionGroup>();
   for (const entry of ourSessions) {
     const { sessionID, agentName, running, finished } = entry;
-    const rawModel = snapshot.sessionTree?.[sessionID]?.model;
-    const model = rawModel
-      ? formatSidebarModelName(rawModel)
-      : snapshot.agentModels[agentName]
-        ? formatSidebarModelName(snapshot.agentModels[agentName])
-        : 'pending';
-    const variant =
-      snapshot.sessionTree?.[sessionID]?.variant ??
-      snapshot.agentDetails?.[agentName]?.variant;
+    const rawModel = mergedTreeSidebar[sessionID]?.model;
+    const model = rawModel ? formatSidebarModelName(rawModel) : 'pending';
+    const variant = mergedTreeSidebar[sessionID]?.variant;
     const key = `${agentName}\x00${model}\x00${variant ?? ''}`;
 
     const group = ourGroups.get(key);
@@ -1143,14 +1162,11 @@ function renderSidebar(
     const { sessionID, agentName, running, finished, count, model, variant } =
       entry;
     const elapsed = finished
-      ? now - (snapshot.sessionTree?.[sessionID]?.finishedAt ?? 0)
+      ? now - (mergedTreeSidebar[sessionID]?.finishedAt ?? 0)
       : 0;
     const flashDot = finished && Math.floor(elapsed / 200) % 2 === 0;
     const indicator = running ? spinner : flashDot ? '·' : ' ';
-    const desc =
-      snapshot.agentDetails?.[agentName]?.description ??
-      AGENT_SIDEBAR_DESCRIPTIONS[agentName] ??
-      agentName;
+    const desc = AGENT_SIDEBAR_DESCRIPTIONS[agentName] ?? agentName;
     const indicatorColor = theme.accent;
     const nameStr = formatAgentName(agentName);
     const descStr = truncate(desc, 10);
@@ -1189,10 +1205,7 @@ function renderSidebar(
           ]),
           text(
             {
-              fg: getStatusColor(
-                snapshot.sessionStatuses?.[sessionID] ?? '-',
-                theme,
-              ),
+              fg: getStatusColor(statusText, theme),
             },
             [statusText],
           ),
@@ -1207,15 +1220,9 @@ function renderSidebar(
     const customGroups = new Map<string, SessionGroup>();
     for (const entry of customSessions) {
       const { sessionID, agentName, running, finished } = entry;
-      const rawModel = snapshot.sessionTree?.[sessionID]?.model;
-      const model = rawModel
-        ? formatSidebarModelName(rawModel)
-        : snapshot.agentModels[agentName]
-          ? formatSidebarModelName(snapshot.agentModels[agentName])
-          : 'pending';
-      const variant =
-        snapshot.sessionTree?.[sessionID]?.variant ??
-        snapshot.agentDetails?.[agentName]?.variant;
+      const rawModel = mergedTreeSidebar[sessionID]?.model;
+      const model = rawModel ? formatSidebarModelName(rawModel) : 'pending';
+      const variant = mergedTreeSidebar[sessionID]?.variant;
       const key = `${agentName}\x00${model}\x00${variant ?? ''}`;
 
       const group = customGroups.get(key);
@@ -1240,7 +1247,7 @@ function renderSidebar(
       const { sessionID, agentName, running, finished, count, model, variant } =
         entry;
       const elapsed = finished
-        ? now - (snapshot.sessionTree?.[sessionID]?.finishedAt ?? 0)
+        ? now - (mergedTreeSidebar[sessionID]?.finishedAt ?? 0)
         : 0;
       const flashDot = finished && Math.floor(elapsed / 200) % 2 === 0;
       const indicator = running ? spinner : flashDot ? '·' : ' ';
@@ -1325,64 +1332,64 @@ function renderSidebar(
       ...agentRows,
       ...(orchestratingRows.length > 0
         ? [
-          box({ width: '100%', height: 1 }),
-          box(
-            {
-              width: '100%',
-              flexDirection: 'column',
-              border: BORDER,
-              borderColor: theme.borderActive,
-              paddingTop: 0,
-              paddingBottom: 0,
-              paddingLeft: 0,
-              paddingRight: 0,
-            },
-            [
-              box(
-                {
-                  width: '100%',
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                },
-                [
-                  text({ fg: theme.text }, ['Orchestrating']),
-                  text({ fg: theme.textMuted }, [
-                    `[${orchestratingRows[0] as string}]`,
-                  ]),
-                ],
-              ),
-              ...(orchestratingRows.slice(1) as Child[]),
-            ],
-          ),
-        ]
+            box({ width: '100%', height: 1 }),
+            box(
+              {
+                width: '100%',
+                flexDirection: 'column',
+                border: BORDER,
+                borderColor: theme.borderActive,
+                paddingTop: 0,
+                paddingBottom: 0,
+                paddingLeft: 0,
+                paddingRight: 0,
+              },
+              [
+                box(
+                  {
+                    width: '100%',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                  },
+                  [
+                    text({ fg: theme.text }, ['Orchestrating']),
+                    text({ fg: theme.textMuted }, [
+                      `[${orchestratingRows[0] as string}]`,
+                    ]),
+                  ],
+                ),
+                ...(orchestratingRows.slice(1) as Child[]),
+              ],
+            ),
+          ]
         : []),
       ...(usageRows.length > 0
         ? [
-          box({ width: '100%', height: 1 }),
-          box(
-            {
-              width: '100%',
-              flexDirection: 'column',
-              border: BORDER,
-              borderColor: theme.borderActive,
-              paddingTop: 0,
-              paddingBottom: 0,
-              paddingLeft: 0,
-              paddingRight: 0,
-            },
-            [
-              box(
-                {
-                  width: '100%',
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                },
-                [text({ fg: theme.text }, ['API Usage'])],
-              ),
-              ...(usageRows as Child[]),
-            ],
-          ),
-        ]
+            box({ width: '100%', height: 1 }),
+            box(
+              {
+                width: '100%',
+                flexDirection: 'column',
+                border: BORDER,
+                borderColor: theme.borderActive,
+                paddingTop: 0,
+                paddingBottom: 0,
+                paddingLeft: 0,
+                paddingRight: 0,
+              },
+              [
+                box(
+                  {
+                    width: '100%',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                  },
+                  [text({ fg: theme.text }, ['API Usage'])],
+                ),
+                ...(usageRows as Child[]),
+              ],
+            ),
+          ]
         : []),
     ],
   );

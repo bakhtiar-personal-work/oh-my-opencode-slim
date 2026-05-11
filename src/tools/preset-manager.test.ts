@@ -7,7 +7,6 @@ import {
   getActiveRuntimePreset,
   setActiveRuntimePreset,
 } from '../config/runtime-preset';
-import { readTuiSnapshot, recordTuiAgentModels } from '../tui-state';
 import { createPresetManager } from './preset-manager';
 
 function createMockContext() {
@@ -167,38 +166,6 @@ describe('createPresetManager', () => {
       });
     });
 
-    test('updates the TUI snapshot after a successful preset switch', async () => {
-      recordTuiAgentModels({
-        agentModels: {
-          explorer: 'openai/gpt-5.4-mini',
-          fixer: 'openai/gpt-5.4-mini',
-        },
-      });
-
-      const ctx = createMockContext();
-      const config: PluginConfig = {
-        presets: {
-          cheap: {
-            orchestrator: { model: 'anthropic/claude-3.5-haiku' },
-            explorer: { model: 'openai/gpt-5.5' },
-          },
-        },
-      };
-      const manager = createPresetManager(ctx, config);
-      const output = createOutput();
-
-      await manager.handleCommandExecuteBefore(
-        { command: 'preset', sessionID: 's1', arguments: 'cheap' },
-        output,
-      );
-
-      expect(readTuiSnapshot().agentModels).toEqual({
-        explorer: 'openai/gpt-5.5',
-        fixer: 'openai/gpt-5.4-mini',
-        orchestrator: 'anthropic/claude-3.5-haiku',
-      });
-    });
-
     test('passes temperature in config update', async () => {
       const ctx = createMockContext();
       const config: PluginConfig = {
@@ -295,12 +262,6 @@ describe('createPresetManager', () => {
     });
 
     test('handles config.update error gracefully', async () => {
-      recordTuiAgentModels({
-        agentModels: {
-          explorer: 'openai/gpt-5.4-mini',
-        },
-      });
-
       const ctx = createMockContext();
       ctx.client.config.update = mock(async () => {
         throw new Error('Server unavailable');
@@ -321,9 +282,6 @@ describe('createPresetManager', () => {
       const text = getOutputText(output);
       expect(text).toContain('Failed to switch preset');
       expect(text).toContain('Server unavailable');
-      expect(readTuiSnapshot().agentModels).toEqual({
-        explorer: 'openai/gpt-5.4-mini',
-      });
     });
 
     test('shows empty preset message when preset has no valid overrides', async () => {

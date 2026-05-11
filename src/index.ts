@@ -1,6 +1,5 @@
 import type { Plugin } from '@opencode-ai/plugin';
 import { createAgents, getAgentConfigs, getDisabledAgents } from './agents';
-import { AGENT_SIDEBAR_DESCRIPTIONS } from './agents/descriptions';
 import { buildOrchestratorPrompt } from './agents/orchestrator';
 import {
   type AgentOverrideConfig,
@@ -47,19 +46,22 @@ import {
 } from './tools';
 import {
   deleteSessionEntries,
+  expandMissingSessionCascade,
+  mergedSessionModels,
+  mergedSessionTree,
+  normalizeProjectDirectory,
+  patchSessionTreeStatusFromOpenCode,
+  pruneStaleTuiSessionBundles,
   readTuiSnapshot,
-  recordAgentDetails,
-  recordOrchestratorActivity,
   recordSessionDone,
   recordSessionEnd,
   recordSessionModel,
   recordSessionNode,
   recordSessionProject,
-  recordSessionStart,
   recordSessionUsage,
   recordSessionVariant,
-  recordTuiAgentModels,
   sessionTreeStore,
+  syncOpenCodeStatusesIntoSessionTree,
   updateSnapshot,
 } from './tui-state';
 import {
@@ -182,12 +184,12 @@ async function ensureModelContextLimits(client: {
       const providers =
         (result.data?.all as
           | Array<{
-            id?: string;
-            models?: Record<
-              string,
-              { id?: string; limit?: { context?: number } }
-            >;
-          }>
+              id?: string;
+              models?: Record<
+                string,
+                { id?: string; limit?: { context?: number } }
+              >;
+            }>
           | undefined) ?? [];
       for (const provider of providers) {
         if (!provider.models) continue;
@@ -245,7 +247,7 @@ async function refreshSessionUsage(
     let contextPct = 0;
 
     // Ensure context limit cache is populated before recording usage
-    await ensureModelContextLimits(ctx.client).catch(() => { });
+    await ensureModelContextLimits(ctx.client).catch(() => {});
 
     const lastTokenMsg = [...assistantMsgs]
       .reverse()
@@ -273,7 +275,7 @@ async function refreshSessionUsage(
 
     // Fallback: if message didn't provide context limit, look up from cache
     if (contextLimit === 0 && contextUsed > 0) {
-      const model = readTuiSnapshot().sessionModels[sessionID];
+      const model = mergedSessionModels(readTuiSnapshot())[sessionID];
       const cachedLimit = model
         ? _modelContextLimitCache.get(model)
         : undefined;
@@ -498,82 +500,53 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           | Record<string, { type: string }>
           | undefined;
         if (!statuses) return;
+        if (Object.keys(statuses).length === 0) return;
 
-        // Write OpenCode statuses for sidebar diagnostic display.
-        // Merge instead of replace: other OpenCode instances may have
-        // active sessions in this shared file.
+        const opencodeIds = new Set(Object.keys(statuses));
+        const currentProjectDir = normalizeProjectDirectory(ctx.directory);
+
+        // Sync polled OpenCode statuses into tree nodes. Bundles are removed
+        // when every session id in the tree is absent from OpenCode (same
+        // project only), by 7d idle TTL, or soft-pruned for partial gaps.
         updateSnapshot((s) => {
-          for (const [sid, st] of Object.entries(statuses)) {
-            s.sessionStatuses[sid] = st.type;
-          }
+          syncOpenCodeStatusesIntoSessionTree(
+            s,
+            statuses as Record<string, { type: string }>,
+          );
+          pruneStaleTuiSessionBundles(s, {
+            opencodeIds,
+            currentProjectDir,
+            now: Date.now(),
+          });
         });
 
-        // Only clean up sessions this instance's in-memory store knows
-        // about. OpenCode's session list is per-instance — sessions from
-        // other instances in the shared file are preserved.
-        const opencodeIds = new Set(Object.keys(statuses));
         const snap = readTuiSnapshot();
+        const mergedForMemory = {
+          ...mergedSessionTree(snap),
+          ...sessionTreeStore,
+        };
 
-        // Collect stale IDs from in-memory store (per-instance) only
-        const idsToDelete = new Set<string>();
-        for (const sid of Object.keys(sessionTreeStore)) {
-          if (!opencodeIds.has(sid)) idsToDelete.add(sid);
-        }
+        const instanceSeeds = Object.keys(sessionTreeStore).filter(
+          (sid) => !opencodeIds.has(sid),
+        );
+        const instanceExpanded = expandMissingSessionCascade(
+          mergedForMemory,
+          instanceSeeds,
+        );
 
-        // Cascade: when a parent is deleted, delete its children too
-        // (children may not be in opencodeIds if they were orphaned)
-        const allNodes = { ...snap.sessionTree, ...sessionTreeStore };
-        let added: boolean;
-        do {
-          added = false;
-          for (const [sid, node] of Object.entries(allNodes)) {
-            if (idsToDelete.has(sid)) continue;
-            if (node.parentId && idsToDelete.has(node.parentId)) {
-              idsToDelete.add(sid);
-              added = true;
-            }
-          }
-        } while (added);
-
-        if (idsToDelete.size === 0) return;
-
-        // Clean in-memory state
-        for (const sid of idsToDelete) {
+        for (const sid of instanceExpanded) {
           sessionAgentMap.delete(sid);
           delete sessionTreeStore[sid];
           if (depthTracker) depthTracker.cleanup(sid);
           deletingSessions.delete(sid);
         }
 
-        // Clean shared file — only remove sessions this instance owned.
-        // Sessions from other instances are untouched.
-        updateSnapshot((s) => {
-          for (const sid of idsToDelete) {
-            // Preserve tree node for token aggregation - mark as idle instead of deleting
-            const node = s.sessionTree[sid];
-            if (node) {
-              node.status = 'idle';
-              node.finishedAt = Date.now();
-            }
-            delete s.activeSessions[sid];
-            delete s.sessionStatuses[sid];
-            delete s.sessionModels[sid];
-            delete s.sessionVariants[sid];
-            delete s.sessionFinished[sid];
-            delete s.sessionUsage[sid];
-            delete s.sessionProjects[sid];
-          }
-        });
-
-        // Refresh usage data for all active sessions so the sidebar
-        // reflects latest values immediately on startup.
         const activeIds = Object.keys(statuses);
         await Promise.allSettled(
           activeIds.map((sid) => refreshSessionUsage(ctx, sid)),
         );
 
-        // Also refresh subscription usage (rate-limited internally).
-        usageService?.refresh(false).catch(() => { });
+        usageService?.refresh(false).catch(() => {});
       } catch {
         // best-effort — silent
       }
@@ -599,7 +572,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       ctx.client,
       runtimeChains,
       config.fallback?.enabled !== false &&
-      Object.keys(runtimeChains).length > 0,
+        Object.keys(runtimeChains).length > 0,
     );
 
     // Initialize todo-continuation hook (opt-in auto-continue for
@@ -679,13 +652,13 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     if (err) {
       const msg = `jsdom probe failed; webfetch tool will not work: ${err}`;
       log(`[plugin] WARN: ${msg}`);
-      appLog(ctx, 'warn', msg).catch(() => { });
+      appLog(ctx, 'warn', msg).catch(() => {});
     }
   });
 
   // ── Reconcile tracking state with OpenCode's actual sessions ───────
   // Startup sync cleans remnants from previous runs/crashes.
-  reconcileSessions().catch(() => { });
+  reconcileSessions().catch(() => {});
 
   return {
     name: 'oh-my-opencode-slim',
@@ -940,43 +913,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }
       }
 
-      const tuiAgentModels: Record<string, string> = {};
-      for (const agentDef of agentDefs) {
-        const entry = configAgent[agentDef.name] as
-          | Record<string, unknown>
-          | undefined;
-        const resolvedModel =
-          typeof entry?.model === 'string'
-            ? entry.model
-            : runtimeChains[agentDef.name]?.[0]
-              ? runtimeChains[agentDef.name][0]
-              : typeof agentDef.config.model === 'string'
-                ? agentDef.config.model
-                : undefined;
-
-        tuiAgentModels[agentDef.name] = resolvedModel ?? 'default';
-      }
-      recordTuiAgentModels({ agentModels: tuiAgentModels });
-
-      const agentDetails: Record<
-        string,
-        { description: string; variant?: string }
-      > = {};
-      for (const agentDef of agentDefs) {
-        const entry = configAgent[agentDef.name] as
-          | Record<string, unknown>
-          | undefined;
-        agentDetails[agentDef.name] = {
-          description:
-            AGENT_SIDEBAR_DESCRIPTIONS[agentDef.name] ?? agentDef.name,
-          variant:
-            typeof entry?.variant === 'string'
-              ? (entry.variant as string)
-              : (agentDef.config.variant as string | undefined),
-        };
-      }
-      recordAgentDetails(agentDetails);
-
       // Merge MCP configs
       const configMcp = opencodeConfig.mcp as
         | Record<string, unknown>
@@ -1089,15 +1025,15 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       if (event.type === 'message.part.updated') {
         const part = event.properties?.part as
           | {
-            type?: string;
-            sessionID?: string;
-            tokens?: {
-              input?: number;
-              output?: number;
-              reasoning?: number;
-              cache?: { read?: number; write?: number };
-            };
-          }
+              type?: string;
+              sessionID?: string;
+              tokens?: {
+                input?: number;
+                output?: number;
+                reasoning?: number;
+                cache?: { read?: number; write?: number };
+              };
+            }
           | undefined;
 
         if (part?.type === 'step-finish' && part?.sessionID && part?.tokens) {
@@ -1116,8 +1052,9 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
             // Look up contextLimit from cache using session's model
             let streamContextLimit = 0;
-            const sessionModel =
-              readTuiSnapshot().sessionModels[part.sessionID];
+            const sessionModel = mergedSessionModels(readTuiSnapshot())[
+              part.sessionID
+            ];
             if (sessionModel) {
               streamContextLimit =
                 _modelContextLimitCache.get(sessionModel) ?? 0;
@@ -1145,22 +1082,17 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       if (event.type === 'message.updated') {
         const info = event.properties?.info;
-        if (typeof info?.agent === 'string') {
-          const resolvedAgent = resolveRuntimeAgentName(config, info.agent);
-          if (resolvedAgent === 'orchestrator') {
-            recordOrchestratorActivity();
-          }
-          if (
-            typeof info.providerID === 'string' &&
-            typeof info.modelID === 'string'
-          ) {
-            const sessionID = info.sessionID ?? event.properties?.sessionID;
-            if (sessionID) {
-              recordSessionModel({
-                sessionID,
-                model: `${info.providerID}/${info.modelID}`,
-              });
-            }
+        if (
+          info &&
+          typeof info.providerID === 'string' &&
+          typeof info.modelID === 'string'
+        ) {
+          const sessionID = info.sessionID ?? event.properties?.sessionID;
+          if (sessionID) {
+            recordSessionModel({
+              sessionID,
+              model: `${info.providerID}/${info.modelID}`,
+            });
           }
         }
 
@@ -1190,7 +1122,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             let contextPct = 0;
 
             // Ensure context limit cache is populated before recording usage
-            await ensureModelContextLimits(ctx.client).catch(() => { });
+            await ensureModelContextLimits(ctx.client).catch(() => {});
 
             const lastTokenMsg = [...assistantMsgs]
               .reverse()
@@ -1220,7 +1152,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             // Fallback: if message didn't provide context limit, look up from
             // cache using the model associated with this session.
             if (contextLimit === 0) {
-              const model = readTuiSnapshot().sessionModels[sessionID];
+              const model = mergedSessionModels(readTuiSnapshot())[sessionID];
               const cachedLimit = model
                 ? _modelContextLimitCache.get(model)
                 : undefined;
@@ -1268,9 +1200,13 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         if (childSessionId && parentSessionId) {
           // Add child to parent's childIds by rewriting the parent node
           updateSnapshot((snapshot) => {
-            const parent = snapshot.sessionTree[parentSessionId];
-            if (parent && !parent.childIds.includes(childSessionId)) {
-              parent.childIds.push(childSessionId);
+            for (const bundle of Object.values(snapshot.sessions)) {
+              const parent = bundle.tree[parentSessionId];
+              if (!parent) continue;
+              if (!parent.childIds.includes(childSessionId)) {
+                parent.childIds.push(childSessionId);
+              }
+              bundle.lastActivityAt = Date.now();
             }
           });
           // Also sync the in-memory store so childIds are available
@@ -1308,16 +1244,14 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         const statusType = event.properties?.status?.type;
         const sessionID = event.properties?.sessionID;
         if (sessionID && statusType) {
-          updateSnapshot((s) => {
-            s.sessionStatuses[sessionID] = statusType;
-          });
+          patchSessionTreeStatusFromOpenCode(sessionID, statusType);
         }
         if (sessionID && statusType === 'idle') {
           if (sessionAgentMap.get(sessionID) === 'orchestrator') {
             // Cascade abort: stop any still-running blocking children
             const snapshot = readTuiSnapshot();
             for (const [childId, child] of Object.entries(
-              snapshot.sessionTree,
+              mergedSessionTree(snapshot),
             )) {
               if (
                 child.parentId === sessionID &&
@@ -1326,7 +1260,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
               ) {
                 ctx.client.session
                   .abort({ path: { id: childId } })
-                  .catch(() => { });
+                  .catch(() => {});
               }
             }
             recordSessionNode({
@@ -1343,25 +1277,19 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             // FLASH_DURATION_MS+1s to flash out. The orchestrator shows a
             // spinner while children are visible, then flashes after they clear.
             updateSnapshot((s) => {
-              const node = s.sessionTree[sessionID];
-              if (node) node.finishedAt = Date.now() + 3000;
+              for (const bundle of Object.values(s.sessions)) {
+                const node = bundle.tree[sessionID];
+                if (node) {
+                  node.finishedAt = Date.now() + 3000;
+                  bundle.lastActivityAt = Date.now();
+                }
+              }
             });
             const storeNode = sessionTreeStore[sessionID];
             if (storeNode) storeNode.finishedAt = Date.now() + 3000;
           } else {
             recordSessionEnd(sessionID);
             recordSessionDone(sessionID);
-          }
-        }
-        if (sessionID && (statusType === 'busy' || statusType === 'retry')) {
-          const agent = sessionAgentMap.get(sessionID);
-          if (agent === 'orchestrator') {
-            recordOrchestratorActivity();
-          } else if (agent) {
-            recordSessionStart({
-              sessionID,
-              agentName: agent,
-            });
           }
         }
       }
@@ -1406,7 +1334,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           directory?: string;
         },
         output as {
-          args?: { patchText?: unknown;[key: string]: unknown };
+          args?: { patchText?: unknown; [key: string]: unknown };
         },
       );
 
@@ -1492,14 +1420,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           sessionID: input.sessionID,
           projectPath: ctx.directory,
         });
-        if (agent === 'orchestrator') {
-          // orchestrator handled inline below — no special activity tracking needed
-        } else {
-          recordSessionStart({
-            sessionID: input.sessionID,
-            agentName: agent,
-          });
-        }
         if (input.model) {
           recordSessionModel({
             sessionID: input.sessionID,
