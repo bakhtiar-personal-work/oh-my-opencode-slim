@@ -46,6 +46,7 @@ import {
   createWebfetchTool,
 } from './tools';
 import {
+  deleteSessionEntries,
   readTuiSnapshot,
   recordAgentDetails,
   recordOrchestratorActivity,
@@ -53,6 +54,7 @@ import {
   recordSessionEnd,
   recordSessionModel,
   recordSessionNode,
+  recordSessionProject,
   recordSessionStart,
   recordSessionUsage,
   recordSessionVariant,
@@ -180,12 +182,12 @@ async function ensureModelContextLimits(client: {
       const providers =
         (result.data?.all as
           | Array<{
-              id?: string;
-              models?: Record<
-                string,
-                { id?: string; limit?: { context?: number } }
-              >;
-            }>
+            id?: string;
+            models?: Record<
+              string,
+              { id?: string; limit?: { context?: number } }
+            >;
+          }>
           | undefined) ?? [];
       for (const provider of providers) {
         if (!provider.models) continue;
@@ -216,6 +218,76 @@ function getCachedContextLimit(
   modelID: string,
 ): number | null {
   return _modelContextLimitCache.get(`${providerID}/${modelID}`) ?? null;
+}
+
+/**
+ * Refresh usage telemetry for a single session by fetching its messages
+ * and re-summing token data. Best-effort: errors are silently caught.
+ * Called during reconciliation so the sidebar shows latest values on
+ * app startup.
+ */
+async function refreshSessionUsage(
+  ctx: Parameters<Plugin>[0],
+  sessionID: string,
+): Promise<void> {
+  try {
+    const messagesResult = await ctx.client.session.messages({
+      path: { id: sessionID },
+    });
+    const allMessages = Array.isArray(messagesResult.data)
+      ? messagesResult.data
+      : [];
+    const assistantMsgs = allMessages.filter(
+      (m) => (m as { info?: { role?: string } }).info?.role === 'assistant',
+    );
+
+    let totalInput = 0;
+    let contextUsed = 0;
+    let totalOutput = 0;
+    let totalReasoning = 0;
+    let totalCacheRead = 0;
+    let totalCacheWrite = 0;
+
+    for (const msg of assistantMsgs) {
+      const telemetry = readTokenTelemetry(msg);
+      if (telemetry) {
+        totalInput = Math.max(totalInput, telemetry.input);
+        contextUsed = Math.max(
+          contextUsed,
+          telemetry.input + telemetry.cacheRead,
+        );
+        totalOutput += telemetry.output;
+        totalReasoning += telemetry.reasoning;
+        totalCacheRead += telemetry.cacheRead;
+        totalCacheWrite += telemetry.cacheWrite;
+      }
+    }
+
+    // Warm up context limit cache (fire-and-forget, idempotent)
+    ensureModelContextLimits(ctx.client).catch(() => { });
+
+    const lastMsg = assistantMsgs[assistantMsgs.length - 1] ?? null;
+    const lastTelemetry = lastMsg ? readTokenTelemetry(lastMsg) : null;
+    const actualContextLimit = lastTelemetry?.contextLimit ?? 0;
+    const contextPct =
+      actualContextLimit > 0 ? (contextUsed / actualContextLimit) * 100 : 0;
+
+    if (contextUsed > 0 || totalInput > 0 || totalOutput > 0) {
+      recordSessionUsage({
+        sessionID,
+        contextUsed,
+        contextLimit: actualContextLimit,
+        contextPct,
+        input: totalInput,
+        output: totalOutput,
+        reasoning: totalReasoning,
+        cacheRead: totalCacheRead,
+        cacheWrite: totalCacheWrite,
+      });
+    }
+  } catch {
+    // Best-effort for sidebar display - don't fail reconciliation
+  }
 }
 
 /**
@@ -477,8 +549,20 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             delete s.sessionModels[sid];
             delete s.sessionVariants[sid];
             delete s.sessionFinished[sid];
+            delete s.sessionUsage[sid];
+            delete s.sessionProjects[sid];
           }
         });
+
+        // Refresh usage data for all active sessions so the sidebar
+        // reflects latest values immediately on startup.
+        const activeIds = Object.keys(statuses);
+        await Promise.allSettled(
+          activeIds.map((sid) => refreshSessionUsage(ctx, sid)),
+        );
+
+        // Also refresh subscription usage (rate-limited internally).
+        usageService?.refresh(false).catch(() => { });
       } catch {
         // best-effort — silent
       }
@@ -504,7 +588,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       ctx.client,
       runtimeChains,
       config.fallback?.enabled !== false &&
-        Object.keys(runtimeChains).length > 0,
+      Object.keys(runtimeChains).length > 0,
     );
 
     // Initialize todo-continuation hook (opt-in auto-continue for
@@ -584,13 +668,13 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     if (err) {
       const msg = `jsdom probe failed; webfetch tool will not work: ${err}`;
       log(`[plugin] WARN: ${msg}`);
-      appLog(ctx, 'warn', msg).catch(() => {});
+      appLog(ctx, 'warn', msg).catch(() => { });
     }
   });
 
   // ── Reconcile tracking state with OpenCode's actual sessions ───────
   // Startup sync cleans remnants from previous runs/crashes.
-  reconcileSessions().catch(() => {});
+  reconcileSessions().catch(() => { });
 
   return {
     name: 'oh-my-opencode-slim',
@@ -970,6 +1054,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             providerID?: string;
             modelID?: string;
             sessionID?: string;
+            directory?: string;
           };
           sessionID?: string;
           error?: { name?: string };
@@ -993,15 +1078,15 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       if (event.type === 'message.part.updated') {
         const part = event.properties?.part as
           | {
-              type?: string;
-              sessionID?: string;
-              tokens?: {
-                input?: number;
-                output?: number;
-                reasoning?: number;
-                cache?: { read?: number; write?: number };
-              };
-            }
+            type?: string;
+            sessionID?: string;
+            tokens?: {
+              input?: number;
+              output?: number;
+              reasoning?: number;
+              cache?: { read?: number; write?: number };
+            };
+          }
           | undefined;
 
         if (part?.type === 'step-finish' && part?.sessionID && part?.tokens) {
@@ -1079,6 +1164,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
             // Sum tokens across all assistant messages
             let totalInput = 0;
+            let contextUsed = 0;
             let totalOutput = 0;
             let totalReasoning = 0;
             let totalCacheRead = 0;
@@ -1089,6 +1175,11 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
               if (telemetry) {
                 // Track peak input across all messages (not just last)
                 totalInput = Math.max(totalInput, telemetry.input);
+                // Track peak context (input + cacheRead) for CTX percentage bar
+                contextUsed = Math.max(
+                  contextUsed,
+                  telemetry.input + telemetry.cacheRead,
+                );
                 // Sum cumulative outputs
                 totalOutput += telemetry.output;
                 totalReasoning += telemetry.reasoning;
@@ -1097,15 +1188,13 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
               }
             }
 
-            const contextUsed = totalInput;
-
             // Resolve the model's context limit from provider
             // configuration.
             if (
               typeof info?.providerID === 'string' &&
               typeof info?.modelID === 'string'
             ) {
-              ensureModelContextLimits(ctx.client).catch(() => {});
+              ensureModelContextLimits(ctx.client).catch(() => { });
             }
 
             // Keep last message's telemetry for context limit fallback
@@ -1114,7 +1203,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
             const actualContextLimit =
               typeof info?.providerID === 'string' &&
-              typeof info?.modelID === 'string'
+                typeof info?.modelID === 'string'
                 ? (getCachedContextLimit(info.providerID, info.modelID) ??
                   lastTelemetry?.contextLimit ??
                   0)
@@ -1150,6 +1239,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         const childSessionId = event.properties?.info?.id;
         const parentSessionId = event.properties?.info?.parentID;
         const title = event.properties?.info?.title;
+        const directory = event.properties?.info?.directory ?? ctx.directory;
         if (depthTracker && childSessionId && parentSessionId) {
           depthTracker.registerChild(parentSessionId, childSessionId);
         }
@@ -1174,6 +1264,12 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           if (storeParent && !storeParent.childIds.includes(childSessionId)) {
             storeParent.childIds.push(childSessionId);
           }
+        }
+        if (childSessionId && directory) {
+          recordSessionProject({
+            sessionID: childSessionId,
+            projectPath: directory,
+          });
         }
       }
 
@@ -1216,7 +1312,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
               ) {
                 ctx.client.session
                   .abort({ path: { id: childId } })
-                  .catch(() => {});
+                  .catch(() => { });
               }
             }
             recordSessionNode({
@@ -1278,9 +1374,9 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         const sessionID =
           event.properties?.info?.id ?? event.properties?.sessionID;
         if (sessionID) {
-          sessionAgentMap.delete(sessionID);
           recordSessionEnd(sessionID);
           recordSessionDone(sessionID);
+          deleteSessionEntries(sessionID);
           if (depthTracker) depthTracker.cleanup(sessionID);
           deletingSessions.delete(sessionID);
         }
@@ -1296,7 +1392,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           directory?: string;
         },
         output as {
-          args?: { patchText?: unknown; [key: string]: unknown };
+          args?: { patchText?: unknown;[key: string]: unknown };
         },
       );
 
@@ -1378,6 +1474,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       if (agent) {
         sessionAgentMap.set(input.sessionID, agent);
+        recordSessionProject({
+          sessionID: input.sessionID,
+          projectPath: ctx.directory,
+        });
         if (agent === 'orchestrator') {
           // orchestrator handled inline below — no special activity tracking needed
         } else {

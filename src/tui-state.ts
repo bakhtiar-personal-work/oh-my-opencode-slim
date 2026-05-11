@@ -57,6 +57,7 @@ export interface TuiSnapshot {
   sessionTree: Record<string, SessionNode>;
   sessionStatuses: Record<string, string>;
   sessionUsage: Record<string, SessionUsageEntry>;
+  sessionProjects: Record<string, string>;
   /** Subscription usage entries keyed by provider + account name. */
   subscriptionUsage: Record<string, SubscriptionUsageEntry>;
   /** Active account name by provider. */
@@ -97,6 +98,7 @@ function emptySnapshot(): TuiSnapshot {
     sessionTree: {},
     sessionStatuses: {},
     sessionUsage: {},
+    sessionProjects: {},
     subscriptionUsage: {},
     activeSubscriptionByProvider: {},
   };
@@ -178,6 +180,7 @@ function parseSnapshot(value: string): TuiSnapshot | null {
     sessionTree: parsed.sessionTree ?? {},
     sessionStatuses: parsed.sessionStatuses ?? {},
     sessionUsage: normalizeSessionUsage(parsed.sessionUsage ?? {}),
+    sessionProjects: parsed.sessionProjects ?? {},
     subscriptionUsage: normalizeSubscriptionUsage(
       parsed.subscriptionUsage ?? {},
     ),
@@ -291,6 +294,7 @@ export function recordSessionEnd(sessionID: string): void {
   updateSnapshot((snapshot) => {
     const agentName = snapshot.activeSessions[sessionID];
     delete snapshot.activeSessions[sessionID];
+    delete snapshot.sessionUsage[sessionID];
     if (agentName) {
       const stillActive = Object.values(snapshot.activeSessions).includes(
         agentName,
@@ -454,6 +458,29 @@ export function removeSubscriptionUsageEntry(
 ): void {
   updateSnapshot((snapshot) => {
     delete snapshot.subscriptionUsage[subscriptionUsageKey(provider, name)];
+  });
+}
+
+export function recordSessionProject(input: {
+  sessionID: string;
+  projectPath: string;
+}): void {
+  updateSnapshot((snapshot) => {
+    snapshot.sessionProjects[input.sessionID] = input.projectPath;
+  });
+}
+
+/** Delete ALL entries for a session across all snapshot records */
+export function deleteSessionEntries(sessionID: string): void {
+  updateSnapshot((snapshot) => {
+    delete snapshot.activeSessions[sessionID];
+    delete snapshot.sessionStatuses[sessionID];
+    delete snapshot.sessionModels[sessionID];
+    delete snapshot.sessionVariants[sessionID];
+    delete snapshot.sessionFinished[sessionID];
+    delete snapshot.sessionUsage[sessionID];
+    delete snapshot.sessionProjects[sessionID];
+    // Note: sessionTree node is intentionally preserved for TUI flash
   });
 }
 
