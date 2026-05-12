@@ -40,7 +40,7 @@ const SIDEBAR_MODEL_DISPLAY_MAX = 20;
  * Orchestrating panel — root session (orchestrator row only).
  * Tune independently from child rows and from the Agents sidebar.
  */
-const ORCH_ROOT_TITLE_DISPLAY_MAX = 24;
+const ORCH_ROOT_TITLE_DISPLAY_MAX = 22;
 const ORCH_ROOT_SESSION_ID_DISPLAY_MAX = 27;
 /** Hyphen-segment model id cap (incl. ellipsis); OpenCode variant suffix stays full. */
 const ORCH_ROOT_MODEL_DISPLAY_MAX = 28;
@@ -1065,7 +1065,7 @@ function buildOrchestratingRows(
           ]),
         ]),
       );
-      pushUsageRows(rows, childId, detailPrefix, true);
+      pushUsageRows(rows, childId, detailPrefix, false);
 
       renderChildren(childId, `${indentPrefix}${pipeChar}  `);
     }
