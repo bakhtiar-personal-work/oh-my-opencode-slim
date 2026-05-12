@@ -3,6 +3,7 @@ import {
   aggregateOrchestrationUsage,
   formatDuration,
   formatSessionUsageRows,
+  formatSidebarModelAndVariant,
   formatSidebarModelName,
   formatTokenAbbrev,
   formatTokenAbbrevDecimal,
@@ -68,6 +69,56 @@ describe('formatSidebarModelName', () => {
 
   test('leaves model names without slashes unchanged', () => {
     expect(formatSidebarModelName('pending')).toBe('pending');
+  });
+});
+
+describe('formatSidebarModelAndVariant', () => {
+  test('long basename stacks hyphen segments then ellipsis; variant stays full', () => {
+    expect(
+      formatSidebarModelAndVariant('opencode/Qwen3.5-397B-A17B-FP8', 'High'),
+    ).toBe('Qwen3.5-397B-A17B… - High');
+  });
+
+  test('long basename without OpenCode variant uses segment ellipsis only', () => {
+    expect(
+      formatSidebarModelAndVariant('opencode/Qwen3.5-397B-A17B-FP8', undefined),
+    ).toBe('Qwen3.5-397B-A17B…');
+  });
+
+  test('smaller maxModelDisplayLen yields a shorter hyphen-safe prefix', () => {
+    expect(
+      formatSidebarModelAndVariant(
+        'opencode/Qwen3.5-397B-A17B-FP8',
+        'High',
+        14,
+      ),
+    ).toBe('Qwen3.5-397B… - High');
+  });
+
+  test('larger cap fits full basename before OpenCode variant', () => {
+    expect(
+      formatSidebarModelAndVariant(
+        'opencode/Qwen3.5-397B-A17B-FP8',
+        'High',
+        28,
+      ),
+    ).toBe('Qwen3.5-397B-A17B-FP8 - High');
+  });
+
+  test('short basenames show full id; variant appended', () => {
+    expect(formatSidebarModelAndVariant('openai/gpt-4o', 'High')).toBe(
+      'gpt-4o - High',
+    );
+    expect(formatSidebarModelAndVariant('openai/gpt-4o', undefined)).toBe(
+      'gpt-4o',
+    );
+  });
+
+  test('long basename without hyphen falls back to character truncate', () => {
+    const long = 'abcdefghijklmnopqrstu';
+    expect(formatSidebarModelAndVariant(`x/${long}`, undefined)).toBe(
+      'abcdefghijklmnopqrs…',
+    );
   });
 });
 

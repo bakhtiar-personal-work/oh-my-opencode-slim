@@ -60,6 +60,7 @@ import {
   recordSessionModel,
   recordSessionNode,
   recordSessionProject,
+  recordSessionTitle,
   recordSessionUsage,
   recordSessionUsagesBatch,
   recordSessionVariant,
@@ -1013,6 +1014,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             agent?: string;
             providerID?: string;
             modelID?: string;
+            variant?: string;
             sessionID?: string;
             directory?: string;
           };
@@ -1095,17 +1097,40 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       if (event.type === 'message.updated') {
         const info = event.properties?.info;
+        const sessionIDForTitle =
+          (info && typeof info.sessionID === 'string' && info.sessionID) ||
+          (typeof event.properties?.sessionID === 'string'
+            ? event.properties.sessionID
+            : undefined);
         if (
+          sessionIDForTitle &&
           info &&
-          typeof info.providerID === 'string' &&
-          typeof info.modelID === 'string'
+          typeof info.title === 'string' &&
+          info.title.trim().length > 0
         ) {
+          recordSessionTitle({
+            sessionID: sessionIDForTitle,
+            title: info.title,
+          });
+        }
+        if (info) {
           const sessionID = info.sessionID ?? event.properties?.sessionID;
           if (sessionID) {
-            recordSessionModel({
-              sessionID,
-              model: `${info.providerID}/${info.modelID}`,
-            });
+            if (
+              typeof info.providerID === 'string' &&
+              typeof info.modelID === 'string'
+            ) {
+              recordSessionModel({
+                sessionID,
+                model: `${info.providerID}/${info.modelID}`,
+              });
+            }
+            if (typeof info.variant === 'string' && info.variant.trim()) {
+              recordSessionVariant({
+                sessionID,
+                variant: info.variant.trim(),
+              });
+            }
           }
         }
 
@@ -1213,6 +1238,35 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }
       }
 
+      if (event.type === 'session.updated') {
+        const info = event.properties?.info;
+        const sid =
+          (typeof info?.id === 'string' && info.id) ||
+          (typeof info?.sessionID === 'string' && info.sessionID) ||
+          (typeof event.properties?.sessionID === 'string'
+            ? event.properties.sessionID
+            : undefined);
+        if (
+          sid &&
+          info &&
+          typeof info.title === 'string' &&
+          info.title.trim().length > 0
+        ) {
+          recordSessionTitle({ sessionID: sid, title: info.title });
+        }
+        if (
+          sid &&
+          info &&
+          typeof info.variant === 'string' &&
+          info.variant.trim().length > 0
+        ) {
+          recordSessionVariant({
+            sessionID: sid,
+            variant: info.variant.trim(),
+          });
+        }
+      }
+
       // Runtime model fallback for foreground agents (rate-limit detection)
       await foregroundFallback.handleEvent(input.event);
 
@@ -1255,7 +1309,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
             }
             recordSessionNode({
               sessionID,
-              title: '',
               agent: 'orchestrator',
               status: 'idle',
             });
@@ -1425,7 +1478,6 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         if (agent) {
           recordSessionNode({
             sessionID: input.sessionID,
-            title: '',
             agent,
             model: input.model
               ? `${input.model.providerID}/${input.model.modelID}`

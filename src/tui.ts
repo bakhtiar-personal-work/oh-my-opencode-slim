@@ -33,6 +33,25 @@ const AGENT_SORT_PRIORITY: Record<string, number> = {
   frame: 7,
 };
 
+/** Model id display cap for the Agents sidebar (active session list). */
+const SIDEBAR_MODEL_DISPLAY_MAX = 20;
+
+/**
+ * Orchestrating panel — root session (orchestrator row only).
+ * Tune independently from child rows and from the Agents sidebar.
+ */
+const ORCH_ROOT_TITLE_DISPLAY_MAX = 26;
+const ORCH_ROOT_SESSION_ID_DISPLAY_MAX = 27;
+/** Hyphen-segment model id cap (incl. ellipsis); OpenCode variant suffix stays full. */
+const ORCH_ROOT_MODEL_DISPLAY_MAX = 28;
+
+/**
+ * Orchestrating panel — every nested subagent under the root (recursive).
+ */
+const ORCH_CHILD_MODEL_DISPLAY_MAX = 22;
+
+const ORCH_DEFAULT_TITLE_LABEL = 'New session';
+
 type Child = JSX.Element | string | number | null | undefined | false;
 
 function element(
@@ -94,6 +113,63 @@ function formatTokenExact(value: number): string {
 export function formatSidebarModelName(model: string): string {
   const lastSlash = model.lastIndexOf('/');
   return lastSlash === -1 ? model : model.slice(lastSlash + 1);
+}
+
+const ELLIPSIS_CHAR = '…';
+
+/**
+ * Shorten a model id (basename after `/`) to at most `maxTotalLen` characters,
+ * keeping full `-` segments (e.g. `Qwen3.5-397B-A17B-FP8` → `Qwen3.5-397B…`).
+ */
+function truncateModelBasenameByHyphenSegments(
+  name: string,
+  maxTotalLen: number,
+): string {
+  if (name.length <= maxTotalLen) return name;
+  const budget = maxTotalLen - ELLIPSIS_CHAR.length;
+  if (budget <= 0) return truncate(name, maxTotalLen);
+
+  const parts = name.split('-').filter((p) => p.length > 0);
+  if (parts.length === 0) return truncate(name, maxTotalLen);
+  const head = parts[0];
+  if (parts.length === 1) {
+    return head ? truncate(head, maxTotalLen) : truncate(name, maxTotalLen);
+  }
+  if (!head) return truncate(name, maxTotalLen);
+  if (head.length > budget) return truncate(head, maxTotalLen);
+
+  let acc = head;
+  for (let i = 1; i < parts.length; i++) {
+    const piece = parts[i];
+    if (!piece) continue;
+    const next = `${acc}-${piece}`;
+    if (next.length > budget) break;
+    acc = next;
+  }
+  if (acc.length >= name.length) return name;
+  return `${acc}${ELLIPSIS_CHAR}`;
+}
+
+/**
+ * Show `provider/model-id` compactly: shorten long basenames on hyphen
+ * boundaries, then append the OpenCode `variant` in full (`model… - High`).
+ */
+export function formatSidebarModelAndVariant(
+  rawModel: string | undefined,
+  variant: string | undefined,
+  maxModelDisplayLen: number = SIDEBAR_MODEL_DISPLAY_MAX,
+): string {
+  const name = rawModel ? formatSidebarModelName(rawModel) : '';
+  const extraVariant = variant?.trim() ?? '';
+
+  if (!name) return extraVariant;
+
+  const modelShown = truncateModelBasenameByHyphenSegments(
+    name,
+    maxModelDisplayLen,
+  );
+  if (!extraVariant) return modelShown;
+  return `${modelShown} - ${extraVariant}`;
 }
 
 export function formatAgentName(name: string): string {
@@ -942,7 +1018,6 @@ function buildOrchestratingRows(
       const isLast = i === visibleChildren.length - 1;
       const branchChar = isLast ? '└' : '├';
       const pipeChar = isLast ? ' ' : '│';
-      const childModel = child.model ? formatSidebarModelName(child.model) : '';
 
       const childFlash =
         child.status === 'idle' &&
@@ -972,9 +1047,7 @@ function buildOrchestratingRows(
           },
           [
             box({ flexDirection: 'row', flexShrink: 0 }, [
-              text({ fg: theme.textMuted }, [
-                `${indentPrefix}${branchChar}─ `,
-              ]),
+              text({ fg: theme.textMuted }, [`${indentPrefix}${branchChar}─ `]),
               text({ fg: theme.text }, [`${indicator} ${child.agent}`]),
             ]),
             renderStatusLineWithOptionalTimer(childStatusText, theme),
@@ -985,7 +1058,11 @@ function buildOrchestratingRows(
         box({ width: '100%', flexDirection: 'row' }, [
           text({ fg: theme.textMuted }, [detailPrefix]),
           text({ fg: theme.text }, [
-            `${truncate(childModel, 14)}${childVariant ? ` - ${childVariant}` : ''}`,
+            formatSidebarModelAndVariant(
+              child.model,
+              childVariant,
+              ORCH_CHILD_MODEL_DISPLAY_MAX,
+            ),
           ]),
         ]),
       );
@@ -996,9 +1073,6 @@ function buildOrchestratingRows(
   };
 
   for (const [orchId, orchNode] of visibleOrchSessions) {
-    const modelStr = orchNode.model
-      ? truncate(formatSidebarModelName(orchNode.model), 20)
-      : '';
     const visibleChildren = getVisibleChildren(orchId);
 
     // Orchestrator dot: spinner while busy or while idle but children still
@@ -1015,6 +1089,10 @@ function buildOrchestratingRows(
       Math.floor((now - orchNode.finishedAt) / 200) % 2 === 0;
     const orchDot = orchShowSpinner ? spinner : orchFlash ? '·' : ' ';
 
+    const row1Title = orchNode.title?.trim()
+      ? truncate(orchNode.title, ORCH_ROOT_TITLE_DISPLAY_MAX)
+      : ORCH_DEFAULT_TITLE_LABEL;
+
     rows.push(
       box(
         {
@@ -1024,7 +1102,7 @@ function buildOrchestratingRows(
         [
           box({ flexDirection: 'row' }, [
             text({ fg: theme.accent }, [`${orchDot} `]),
-            text({ fg: theme.text }, [truncate(orchNode.title || orchId, 25)]),
+            text({ fg: theme.text }, [row1Title]),
           ]),
           text({ fg: theme.text }, [
             orchNode.status === 'busy' || orchNode.status === 'retry'
@@ -1034,7 +1112,6 @@ function buildOrchestratingRows(
         ],
       ),
     );
-    const orchVariant = orchNode.variant;
     const orchStatusText = getStatusText(snapshot, orchId);
     rows.push(
       box(
@@ -1047,12 +1124,25 @@ function buildOrchestratingRows(
           box({ flexDirection: 'row', flexShrink: 0 }, [
             text({ fg: theme.textMuted }, ['  ']),
             text({ fg: theme.text }, [
-              `${modelStr}${orchVariant ? ` - ${orchVariant}` : ''}`,
+              truncate(orchId, ORCH_ROOT_SESSION_ID_DISPLAY_MAX),
             ]),
           ]),
-          text({ fg: getStatusColor(orchStatusText, theme) }, [orchStatusText]),
+          renderStatusLineWithOptionalTimer(orchStatusText, theme),
         ],
       ),
+    );
+    const modelLine = formatSidebarModelAndVariant(
+      orchNode.model,
+      orchNode.variant,
+      ORCH_ROOT_MODEL_DISPLAY_MAX,
+    );
+    rows.push(
+      box({ width: '100%', flexDirection: 'row' }, [
+        text({ fg: theme.textMuted }, ['  ']),
+        text({ fg: theme.textMuted }, [
+          modelLine.length > 0 ? modelLine : 'pending',
+        ]),
+      ]),
     );
     pushUsageRows(rows, orchId, '  ', true);
     pushAggregateRows(rows, orchId, '  ');
@@ -1176,8 +1266,7 @@ function renderSidebar(
   }
 
   for (const entry of ourGroups.values()) {
-    const { sessionID, agentName, running, finished, count, model, variant } =
-      entry;
+    const { sessionID, agentName, running, finished, count, variant } = entry;
     const elapsed = finished
       ? now - (mergedTreeSidebar[sessionID]?.finishedAt ?? 0)
       : 0;
@@ -1206,7 +1295,8 @@ function renderSidebar(
       ),
     );
 
-    const modelStr = truncate(model, 20).padEnd(8);
+    const rawModel = mergedTreeSidebar[sessionID]?.model;
+    const modelVariantLine = formatSidebarModelAndVariant(rawModel, variant);
     const statusText = getStatusText(snapshot, sessionID);
 
     agentRows.push(
@@ -1218,7 +1308,7 @@ function renderSidebar(
         },
         [
           text({ fg: theme.textMuted }, [
-            `  ${modelStr}${variant ? ` - ${variant}` : ''}`,
+            modelVariantLine.length > 0 ? `  ${modelVariantLine}` : '  pending',
           ]),
           text(
             {
@@ -1261,15 +1351,18 @@ function renderSidebar(
     }
 
     for (const entry of customGroups.values()) {
-      const { sessionID, agentName, running, finished, count, model, variant } =
-        entry;
+      const { sessionID, agentName, running, finished, count, variant } = entry;
       const elapsed = finished
         ? now - (mergedTreeSidebar[sessionID]?.finishedAt ?? 0)
         : 0;
       const flashDot = finished && Math.floor(elapsed / 200) % 2 === 0;
       const indicator = running ? spinner : flashDot ? '·' : ' ';
       const nameStr = formatAgentName(agentName);
-      const modelStr = truncate(model, 20).padEnd(8);
+      const rawModelChild = mergedTreeSidebar[sessionID]?.model;
+      const modelVariantLineCustom = formatSidebarModelAndVariant(
+        rawModelChild,
+        variant,
+      );
       const customStatusText = getStatusText(snapshot, sessionID);
 
       agentRows.push(
@@ -1298,7 +1391,9 @@ function renderSidebar(
           },
           [
             text({ fg: theme.textMuted }, [
-              `  ${modelStr}${variant ? ` - ${variant}` : ''}`,
+              modelVariantLineCustom.length > 0
+                ? `  ${modelVariantLineCustom}`
+                : '  pending',
             ]),
             text({ fg: getStatusColor(customStatusText, theme) }, [
               customStatusText,

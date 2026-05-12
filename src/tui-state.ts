@@ -1033,7 +1033,8 @@ export function recordSessionVariant(input: {
 
 export function recordSessionNode(input: {
   sessionID: string;
-  title: string;
+  /** Omit to keep the existing title (e.g. from `session.created`). Pass `''` to clear. */
+  title?: string;
   agent: string;
   model?: string;
   variant?: string;
@@ -1060,7 +1061,7 @@ export function recordSessionNode(input: {
       };
     const node = {
       ...existing,
-      title: input.title ?? existing.title,
+      title: input.title !== undefined ? input.title : existing.title,
       agent: input.agent || existing.agent,
       model: input.model ?? existing.model,
       variant: input.variant !== undefined ? input.variant : existing.variant,
@@ -1072,6 +1073,32 @@ export function recordSessionNode(input: {
     };
     bundle.tree[input.sessionID] = node;
     sessionTreeStore[input.sessionID] = node;
+    touchBundle(bundle);
+  });
+}
+
+/** Persist session title from OpenCode when the SDK reports a non-empty name. */
+export function recordSessionTitle(input: {
+  sessionID: string;
+  title: string;
+}): void {
+  const trimmed = input.title.trim();
+  if (!trimmed) return;
+  updateSnapshot((snapshot) => {
+    const hit = locateBundleForSession(snapshot, input.sessionID);
+    if (hit) {
+      const node = hit.bundle.tree[input.sessionID];
+      if (node) {
+        node.title = trimmed;
+        sessionTreeStore[input.sessionID] = node;
+        touchBundle(hit.bundle);
+      }
+      return;
+    }
+    const rootId = resolveBundleRootForSession(snapshot, input.sessionID);
+    const bundle = ensureBundle(snapshot, rootId);
+    const node = getOrCreateTreeNode(bundle, input.sessionID);
+    node.title = trimmed;
     touchBundle(bundle);
   });
 }

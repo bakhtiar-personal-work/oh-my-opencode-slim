@@ -6,6 +6,7 @@ import {
   deleteSessionEntries,
   flushTuiSnapshot,
   getTuiStatePath,
+  mergedSessionTree,
   mergedSessionUsage,
   normalizeProjectDirectory,
   pruneStaleTuiSessionBundles,
@@ -14,6 +15,7 @@ import {
   recordSessionDone,
   recordSessionNode,
   recordSessionProject,
+  recordSessionTitle,
   recordSessionUsage,
   recordSessionUsagesBatch,
   recordSubscriptionUsage,
@@ -222,6 +224,32 @@ describe('activeSubscriptionByProvider', () => {
     expect(readTuiSnapshot().activeSubscriptionByProvider['opencode-go']).toBe(
       'personal',
     );
+  });
+});
+
+describe('recordSessionTitle', () => {
+  test('sets tree title when SDK reports a non-empty name', () => {
+    recordSessionNode({
+      sessionID: 'orch-1',
+      title: '',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionTitle({ sessionID: 'orch-1', title: '  My task  ' });
+    expect(mergedSessionTree(readTuiSnapshot())['orch-1']?.title).toBe(
+      'My task',
+    );
+  });
+
+  test('ignores empty title string', () => {
+    recordSessionNode({
+      sessionID: 'orch-2',
+      title: 'kept',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionTitle({ sessionID: 'orch-2', title: '   ' });
+    expect(mergedSessionTree(readTuiSnapshot())['orch-2']?.title).toBe('kept');
   });
 });
 
