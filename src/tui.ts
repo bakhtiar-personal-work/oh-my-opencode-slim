@@ -879,7 +879,7 @@ function buildOrchestratingRows(
             box({ flexDirection: 'row' }, [
               text({ fg: theme.textMuted }, [prefix]),
               text({ fg: SIGMA_TOTAL_COLOR }, ['Σ CACHE ']),
-              text({ fg: theme.text }, [formatTokenAbbrev(totalCache)]),
+              text({ fg: theme.text }, [formatTokenExact(totalCache)]),
             ]),
             renderMetricPairRight(
               '📖',
