@@ -97,6 +97,14 @@ export function mergedSessionTree(
   return out;
 }
 
+/** 0–100, from current context used ÷ limit (single source of truth for CTX %). */
+export function deriveSessionContextPct(used: number, limit: number): number {
+  if (!(limit > 0)) return 0;
+  if (!(Number.isFinite(used) && Number.isFinite(limit))) return 0;
+  const safeUsed = Math.max(0, used);
+  return Math.max(0, Math.min(100, (safeUsed / limit) * 100));
+}
+
 function coerceSessionUsageEntry(
   raw: Partial<SessionUsageEntry> | undefined,
 ): SessionUsageEntry | undefined {
@@ -753,16 +761,19 @@ function applyRecordSessionUsageToSnapshot(
   const node = getOrCreateTreeNode(bundle, input.sessionID);
   const prev = coerceSessionUsageEntry(node.usage);
 
+  const nextContextUsed =
+    input.contextUsed !== undefined
+      ? Math.max(0, input.contextUsed)
+      : (prev?.contextUsed ?? 0);
+  const nextContextLimit =
+    input.contextLimit != null && input.contextLimit > 0
+      ? input.contextLimit
+      : (prev?.contextLimit ?? 0);
+
   const next: SessionUsageEntry = {
-    contextUsed:
-      input.contextUsed !== undefined
-        ? Math.max(prev?.contextUsed ?? 0, input.contextUsed)
-        : (prev?.contextUsed ?? 0),
-    contextLimit: input.contextLimit ?? prev?.contextLimit ?? 0,
-    contextPct:
-      input.contextPct !== undefined
-        ? Math.max(0, Math.min(100, input.contextPct))
-        : (prev?.contextPct ?? 0),
+    contextUsed: nextContextUsed,
+    contextLimit: nextContextLimit,
+    contextPct: deriveSessionContextPct(nextContextUsed, nextContextLimit),
     input:
       input.input !== undefined
         ? Math.max(prev?.input ?? 0, input.input)

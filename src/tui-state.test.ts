@@ -279,6 +279,81 @@ describe('sessionUsage', () => {
     expect(usage?.cacheWrite).toBe(700);
   });
 
+  test('recomputes contextPct from used/limit on model switch (stale pct is ignored)', () => {
+    recordSessionUsage({
+      sessionID: 'session-model-switch',
+      contextUsed: 170_000,
+      contextLimit: 1_000_000,
+      contextPct: 17,
+      input: 10_000,
+      output: 500,
+      reasoning: 0,
+      cacheRead: 100,
+      cacheWrite: 50,
+    });
+    recordSessionUsage({
+      sessionID: 'session-model-switch',
+      contextUsed: 228_700,
+      contextLimit: 262_144,
+      contextPct: 17,
+      input: 12_000,
+      output: 600,
+      reasoning: 0,
+      cacheRead: 200,
+      cacheWrite: 60,
+    });
+    const usage = mergedSessionUsage(readTuiSnapshot())['session-model-switch'];
+    expect(usage?.contextUsed).toBe(228_700);
+    expect(usage?.contextLimit).toBe(262_144);
+    expect(usage?.contextPct).toBeCloseTo((228_700 / 262_144) * 100, 5);
+  });
+
+  test('context usage may decrease after compact; sigma context adds only non-negative deltas', () => {
+    recordSessionNode({
+      sessionID: 'orch-compact',
+      title: 'orch',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'solo',
+      title: 'solo',
+      agent: 'explorer',
+      parentId: 'orch-compact',
+      status: 'busy',
+    });
+    recordSessionUsage({
+      sessionID: 'solo',
+      contextUsed: 50_000,
+      contextLimit: 1_000_000,
+      input: 10_000,
+      output: 500,
+      reasoning: 0,
+      cacheRead: 1_000,
+      cacheWrite: 100,
+    });
+    recordSessionUsage({
+      sessionID: 'solo',
+      contextUsed: 8_000,
+      contextLimit: 262_144,
+      input: 12_000,
+      output: 600,
+      reasoning: 0,
+      cacheRead: 1_100,
+      cacheWrite: 100,
+    });
+    const snap = readTuiSnapshot();
+    expect(mergedSessionUsage(snap).solo?.contextUsed).toBe(8_000);
+    expect(mergedSessionUsage(snap).solo?.contextLimit).toBe(262_144);
+    expect(snap.sessions['orch-compact']?.orchestrationSigmaAccum).toEqual({
+      contextUsed: 50_000,
+      input: 12_000,
+      output: 600,
+      cacheRead: 1_100,
+      cacheWrite: 100,
+    });
+  });
+
   test('accumulates orchestration sigma from per-session deltas and persists across idle', () => {
     recordSessionNode({
       sessionID: 'orch',

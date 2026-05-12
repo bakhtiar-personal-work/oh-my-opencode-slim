@@ -9,6 +9,7 @@ import type {
 } from './subscriptions/types';
 import type { SubscriptionUsageEntry } from './tui-state';
 import {
+  deriveSessionContextPct,
   mergedOrchestrationSigmaAccum,
   mergedSessionTree,
   mergedSessionUsage,
@@ -208,7 +209,9 @@ export function formatSessionUsageRows(
   const usage = mergedSessionUsage(snapshot)[sessionID];
   const contextUsed = usage?.contextUsed ?? 0;
   const contextLimit = usage?.contextLimit ?? 0;
-  const contextPct = Math.round(usage?.contextPct ?? 0);
+  const contextPct = Math.round(
+    deriveSessionContextPct(contextUsed, contextLimit),
+  );
   const inputTotal = usage?.input ?? 0;
   const outputTotal = usage?.output ?? 0;
   const cacheRead = usage?.cacheRead ?? 0;
