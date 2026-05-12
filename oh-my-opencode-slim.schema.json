@@ -524,6 +524,23 @@
         }
       }
     },
+    "contextPressure": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "When true, warn the orchestrator on high context usage before the model fails.",
+          "type": "boolean"
+        },
+        "warnThresholdPct": {
+          "default": 75,
+          "description": "Inject a /compact reminder when context (used ÷ limit) is at least this percent.",
+          "type": "number",
+          "minimum": 1,
+          "maximum": 99
+        }
+      }
+    },
     "fallback": {
       "type": "object",
       "properties": {

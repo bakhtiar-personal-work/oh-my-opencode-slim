@@ -18,6 +18,7 @@ import {
   createApplyPatchHook,
   createAutoUpdateCheckerHook,
   createChatHeadersHook,
+  createContextPressureReminderHook,
   createDelegateTaskRetryHook,
   createFilterAvailableSkillsHook,
   createJsonErrorRecoveryHook,
@@ -360,6 +361,9 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
   let foregroundFallback: ForegroundFallbackManager;
   let todoContinuationHook: ReturnType<typeof createTodoContinuationHook>;
   let taskSessionManagerHook: ReturnType<typeof createTaskSessionManagerHook>;
+  let contextPressureReminderHook: ReturnType<
+    typeof createContextPressureReminderHook
+  >;
   let interviewManager: ReturnType<typeof createInterviewManager>;
   let presetManager: ReturnType<typeof createPresetManager>;
   let usageService: UsageService | null;
@@ -607,6 +611,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       readContextMaxFiles: config.sessionManager?.readContextMaxFiles ?? 8,
       shouldManageSession: (sessionID) =>
         sessionAgentMap.get(sessionID) === 'orchestrator',
+    });
+    contextPressureReminderHook = createContextPressureReminderHook({
+      enabled: config.contextPressure?.enabled ?? true,
+      warnThresholdPct: config.contextPressure?.warnThresholdPct ?? 75,
     });
     interviewManager = createInterviewManager(ctx, config);
     presetManager = createPresetManager(ctx, config);
@@ -1560,12 +1568,14 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }>;
       };
 
-      if (
-        typedOutput.messages.some((message) => message.info.role === 'user')
-      ) {
+      const hasUserTurn = typedOutput.messages.some(
+        (message) => message.info.role === 'user',
+      );
+      if (hasUserTurn) {
         // After the user submits, session.status reliably reflects OpenCode —
         // better than reconciling once at startup (empty/partial snapshots).
-        reconcileSessions().catch(() => {});
+        // Await so context telemetry is fresh for hooks (e.g. /compact reminder).
+        await reconcileSessions();
       }
 
       for (const message of typedOutput.messages) {
@@ -1586,6 +1596,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         messages: typedOutput.messages,
       });
       await taskSessionManagerHook['experimental.chat.messages.transform'](
+        input,
+        typedOutput,
+      );
+      await contextPressureReminderHook['experimental.chat.messages.transform'](
         input,
         typedOutput,
       );

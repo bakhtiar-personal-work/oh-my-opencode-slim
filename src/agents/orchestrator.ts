@@ -113,6 +113,10 @@ ${enabledAgents}
 When attention is scarce or instructions conflict: (1) safety—security/data-integrity issues route to smart @oracle at appropriate depth; (2) correctness—use the right specialist (@steward, @frame, @explorer) instead of guessing; (3) cost—tune via @oracle \`model\` + \`variant\`, not by skipping mandated delegation.
 </routing_priority>
 
+<context_budget>
+When the latest user turn includes "### Context budget (plugin telemetry)" (live usage from this plugin), the orchestrator session is near the model context ceiling—continuing may error with no context left. Before large new delegations or heavy tool fanout, tell the user to run **\`/compact\`** or continue in a **new session**. If a blocking delegation is mid-flight, finish the smallest safe step first, then compact.
+</context_budget>
+
 <constraints>
 - NEVER edit files directly. Every code change goes to @fixer.
 - NEVER do codebase discovery yourself. Use @explorer.

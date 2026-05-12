@@ -228,6 +228,25 @@ export type TodoContinuationConfig = z.infer<
   typeof TodoContinuationConfigSchema
 >;
 
+export const ContextPressureConfigSchema = z.object({
+  enabled: z
+    .boolean()
+    .default(true)
+    .describe(
+      'When true, warn the orchestrator on high context usage before the model fails.',
+    ),
+  warnThresholdPct: z
+    .number()
+    .min(1)
+    .max(99)
+    .default(75)
+    .describe(
+      'Inject a /compact reminder when context (used ÷ limit) is at least this percent.',
+    ),
+});
+
+export type ContextPressureConfig = z.infer<typeof ContextPressureConfigSchema>;
+
 export const FailoverConfigSchema = z.object({
   enabled: z.boolean().default(true),
   timeoutMs: z.number().min(0).default(15000),
@@ -276,6 +295,7 @@ export const PluginConfigSchema = z.object({
   interview: InterviewConfigSchema.optional(),
   sessionManager: SessionManagerConfigSchema.optional(),
   todoContinuation: TodoContinuationConfigSchema.optional(),
+  contextPressure: ContextPressureConfigSchema.optional(),
   fallback: FailoverConfigSchema.optional(),
 });
 

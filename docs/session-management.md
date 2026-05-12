@@ -175,3 +175,26 @@ Example with a larger memory window:
   }
 }
 ```
+
+---
+
+## Context pressure reminder
+
+When telemetry shows this orchestrator session is nearing the model context
+window (default: **75%** or higher), the plugin appends a short **### Context budget**
+note to your outgoing user turn (after syncing usage from OpenCode). It tells the
+orchestrator to ask you to run **`/compact`** or start a **new session** before heavy
+new delegation—reducing hard failures near ~85%+ usage.
+
+Configure under `contextPressure` in `oh-my-opencode-slim.jsonc`:
+
+```jsonc
+{
+  "contextPressure": {
+    "enabled": true,
+    "warnThresholdPct": 75
+  }
+}
+```
+
+Set `"enabled": false` to disable. Threshold must be between 1 and 99.

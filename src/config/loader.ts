@@ -168,6 +168,10 @@ export function loadPluginConfig(directory: string): PluginConfig {
         config.sessionManager,
         projectConfig.sessionManager,
       ),
+      contextPressure: deepMerge(
+        config.contextPressure,
+        projectConfig.contextPressure,
+      ),
       fallback: deepMerge(config.fallback, projectConfig.fallback),
     };
   }
