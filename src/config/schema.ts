@@ -7,6 +7,8 @@ const FALLBACK_AGENT_NAMES = [
   'explorer',
   'librarian',
   'fixer',
+  'steward',
+  'frame',
 ] as const;
 
 const MANUAL_AGENT_NAMES = [
@@ -72,6 +74,8 @@ const FallbackChainsSchema = z
     explorer: AgentModelChainSchema.optional(),
     librarian: AgentModelChainSchema.optional(),
     fixer: AgentModelChainSchema.optional(),
+    steward: AgentModelChainSchema.optional(),
+    frame: AgentModelChainSchema.optional(),
   })
   .catchall(AgentModelChainSchema);
 

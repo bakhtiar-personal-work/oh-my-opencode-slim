@@ -13,10 +13,12 @@ import { getAgentMcpList } from '../config/agent-mcps';
 import { createDesignerAgent } from './designer';
 import { createExplorerAgent } from './explorer';
 import { createFixerAgent } from './fixer';
+import { createFrameAgent } from './frame';
 import { createLibrarianAgent } from './librarian';
 import { createOracleAgent } from './oracle';
 import { type AgentDefinition, createOrchestratorAgent } from './orchestrator';
 import { applyDefaultPermissions, applyOverrides } from './overrides';
+import { createStewardAgent } from './steward';
 
 export type { AgentDefinition } from './orchestrator';
 
@@ -69,6 +71,8 @@ const SUBAGENT_FACTORIES: Record<SubagentName, AgentFactory> = {
   oracle: createOracleAgent,
   designer: createDesignerAgent,
   fixer: createFixerAgent,
+  steward: createStewardAgent,
+  frame: createFrameAgent,
 };
 
 // Public API

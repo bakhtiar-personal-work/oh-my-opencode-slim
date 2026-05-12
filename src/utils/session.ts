@@ -2,9 +2,21 @@
  * Shared session utilities for background managers.
  */
 
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { PluginInput } from '@opencode-ai/plugin';
 
 type OpencodeClient = PluginInput['client'];
+
+type SessionPromptBody = NonNullable<
+  Parameters<OpencodeClient['session']['prompt']>[0]['body']
+>;
+
+/** Multimodal / text parts accepted by `session.prompt` */
+export type PromptBodyPart = SessionPromptBody['parts'][number];
+
+/** Prompt body including optional variant (supported by the host at runtime). */
+export type PromptBody = SessionPromptBody & { variant?: string };
 
 /**
  * Extract the short model label from a "provider/model" string.
@@ -13,17 +25,6 @@ type OpencodeClient = PluginInput['client'];
 export function shortModelLabel(model: string): string {
   return model.split('/').pop() ?? model;
 }
-
-export type PromptBody = {
-  messageID?: string;
-  model?: { providerID: string; modelID: string };
-  agent?: string;
-  noReply?: boolean;
-  system?: string;
-  tools?: { [key: string]: boolean };
-  parts: Array<{ type: 'text'; text: string }>;
-  variant?: string;
-};
 
 /**
  * Parse a model reference string into provider and model IDs.
@@ -41,6 +42,144 @@ export function parseModelReference(
     providerID: model.slice(0, slashIndex),
     modelID: model.slice(slashIndex + 1),
   };
+}
+
+/**
+ * OpenCode stores pasted / attached screenshots as {@link FilePart} (`type: "file"`,
+ * `mime` starting with `image/`), not as `type: "image"`. Some stacks still emit
+ * legacy `image` parts — accept both.
+ *
+ * @see https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/message-v2.ts
+ */
+export function isForwardableImagePart(part: Record<string, unknown>): boolean {
+  const t = part.type;
+  if (t === 'image') {
+    return true;
+  }
+  if (t === 'file') {
+    const mimeRaw = part.mime;
+    const mime =
+      typeof mimeRaw === 'string' ? mimeRaw.toLowerCase().trim() : '';
+    if (mime.startsWith('image/')) {
+      return true;
+    }
+    const fn = part.filename;
+    if (
+      typeof fn === 'string' &&
+      /\.(png|jpe?g|gif|webp|bmp|heic|avif)$/i.test(fn)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Non-text parts (e.g. images) from the latest user message in a session.
+ * Used when forwarding multimodal context to delegated agents such as @frame.
+ */
+export async function extractLatestUserImageParts(
+  client: OpencodeClient,
+  sessionId: string,
+  directory: string,
+): Promise<PromptBodyPart[]> {
+  const messagesResult = await client.session.messages({
+    path: { id: sessionId },
+    query: { directory },
+  });
+  const messages = (messagesResult.data ?? []) as Array<{
+    info?: { role?: string };
+    parts?: Array<Record<string, unknown>>;
+  }>;
+  const userMessages = messages.filter((m) => m.info?.role === 'user');
+  const lastUser = userMessages[userMessages.length - 1];
+  if (!lastUser?.parts?.length) {
+    return [];
+  }
+  return lastUser.parts.filter(isForwardableImagePart) as PromptBodyPart[];
+}
+
+function fileUrlFromSource(
+  source: unknown,
+  workspaceDirectory: string | undefined,
+): string | undefined {
+  if (!source || typeof source !== 'object') return undefined;
+  const s = source as Record<string, unknown>;
+  if (s.type !== 'file') return undefined;
+  const filePath = s.path;
+  if (typeof filePath !== 'string' || !filePath.trim()) return undefined;
+  try {
+    const resolved = path.isAbsolute(filePath)
+      ? filePath
+      : workspaceDirectory
+        ? path.resolve(workspaceDirectory, filePath)
+        : filePath;
+    return pathToFileURL(resolved).href;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Stored {@link FilePart} rows include `sessionID` / `messageID` / etc. Child
+ * `session.prompt` expects {@link FilePartInput}-shaped drafts (`type`, `mime`,
+ * `url`, optional `filename`). Some attachments omit `url` but provide
+ * `source.path` — resolve that to a `file:` URL when possible.
+ */
+export function normalizeImagePartsForChildPrompt(
+  parts: PromptBodyPart[],
+  workspaceDirectory?: string,
+): PromptBodyPart[] {
+  const out: PromptBodyPart[] = [];
+
+  for (const part of parts) {
+    const p = part as Record<string, unknown>;
+
+    if (p.type === 'file' && isForwardableImagePart(p)) {
+      let url = typeof p.url === 'string' && p.url.length > 0 ? p.url : '';
+      const mimeRaw =
+        typeof p.mime === 'string'
+          ? p.mime
+          : typeof p.mediaType === 'string'
+            ? (p.mediaType as string)
+            : 'application/octet-stream';
+
+      const filename = typeof p.filename === 'string' ? p.filename : undefined;
+
+      if (!url) {
+        url = fileUrlFromSource(p.source, workspaceDirectory) ?? '';
+      }
+      if (!url) continue;
+
+      const draft: Record<string, unknown> = {
+        type: 'file',
+        mime: mimeRaw,
+        url,
+      };
+      if (filename) draft.filename = filename;
+      out.push(draft as PromptBodyPart);
+      continue;
+    }
+
+    if (p.type === 'image') {
+      const raw = p.image ?? p.data ?? p.url;
+      const imageStr = typeof raw === 'string' ? raw : '';
+
+      if (imageStr.startsWith('data:')) {
+        const mimeMatch = imageStr.match(/^data:([^;]+);/);
+        const mime = mimeMatch?.[1] ?? 'image/png';
+        out.push({ type: 'file', mime, url: imageStr } as PromptBodyPart);
+      } else if (/^https?:\/\//i.test(imageStr)) {
+        out.push({
+          type: 'file',
+          mime: 'image/png',
+          url: imageStr,
+        } as PromptBodyPart);
+      }
+    }
+  }
+
+  return out;
 }
 
 /**

@@ -17,8 +17,7 @@ export const AGENT_DESCRIPTIONS: Record<string, string> = {
 </agent>`,
   oracle: `<agent name="@oracle">
 - Role: strategic analysis and code review specialist
-- Delegate when: debugging, architecture, tradeoffs, risk review
-- Do not use when: pure factual answer with zero analysis required
+- Delegate when: any analysis—debugging, architecture, tradeoffs, risk, reviews—including trivial asks (use default flash + medium–max or smart + low–max per orchestrator matrix)
 </agent>`,
   designer: `<agent name="@designer">
 - Role: UI and UX specialist
@@ -30,6 +29,16 @@ export const AGENT_DESCRIPTIONS: Record<string, string> = {
 - Delegate when: any code edit, test update, scoped execution task
 - Do not use when: discovery or strategy is still unresolved
 </agent>`,
+  steward: `<agent name="@steward">
+- Role: in-repo agent rules and IDE policy discovery
+- Delegate when: feature/refactor/tooling work where local conventions may apply; ambiguous style or repo policy; before heavy oracle/fixer when rules unknown
+- Do not use when: pure codebase symbol search (use @explorer), external docs (use @librarian), or @steward is disabled—then fall back to @explorer globs for AGENTS/.docs only
+</agent>`,
+  frame: `<agent name="@frame">
+- Role: screenshot and attached-image analyst (errors, diagrams, repro captures)
+- Delegate when: user message includes images and the task is not explicitly UI redesign/polish-only
+- Do not use when: explicit UI/UX redesign review—use @designer; text-only questions with no attachments
+</agent>`,
 };
 
 // Compact sidebar labels for the TUI agent list
@@ -40,4 +49,6 @@ export const AGENT_SIDEBAR_DESCRIPTIONS: Record<string, string> = {
   oracle: 'Architecture',
   designer: 'Design',
   fixer: 'Implement',
+  steward: 'Repo rules',
+  frame: 'Vision',
 };

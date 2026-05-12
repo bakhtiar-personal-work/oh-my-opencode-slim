@@ -73,10 +73,13 @@ function extractPath(output: string): string | undefined {
 
 function normalizePath(root: string, file: string): string {
   const relative = path.relative(root, file);
+  let display: string;
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-    return file;
+    display = file;
+  } else {
+    display = relative;
   }
-  return relative;
+  return display.split(path.sep).join('/');
 }
 
 function extractReadFiles(

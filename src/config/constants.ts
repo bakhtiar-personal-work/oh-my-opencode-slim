@@ -10,6 +10,8 @@ export const SUBAGENT_NAMES = [
   'oracle',
   'designer',
   'fixer',
+  'steward',
+  'frame',
 ] as const;
 
 export const ORCHESTRATOR_NAME = 'orchestrator' as const;
@@ -28,6 +30,8 @@ export const ORCHESTRATABLE_AGENTS = [
   'oracle',
   'designer',
   'fixer',
+  'steward',
+  'frame',
 ] as const;
 
 /** Agents that cannot be disabled even if listed in disabled_agents config. */
@@ -50,6 +54,8 @@ export const SUBAGENT_DELEGATION_RULES: Record<AgentName, readonly string[]> = {
   explorer: [],
   librarian: [],
   oracle: [],
+  steward: [],
+  frame: [],
 };
 
 // Default models for each agent
@@ -64,6 +70,8 @@ export const DEFAULT_MODELS: Record<AgentName, string | undefined> = {
   explorer: 'neuralwatt/qwen3.5-397b-fast',
   designer: 'opencode-go/mimo-v2.5-pro',
   fixer: 'opencode-go/deepseek-v4-flash',
+  steward: 'opencode-go/deepseek-v4-flash',
+  frame: 'opencode-go/mimo-v2.5-pro',
 };
 
 // Polling configuration

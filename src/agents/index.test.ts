@@ -267,6 +267,8 @@ describe('isSubagent type guard', () => {
     expect(isSubagent('oracle')).toBe(true);
     expect(isSubagent('designer')).toBe(true);
     expect(isSubagent('fixer')).toBe(true);
+    expect(isSubagent('steward')).toBe(true);
+    expect(isSubagent('frame')).toBe(true);
   });
 
   test('returns false for orchestrator', () => {
@@ -285,6 +287,8 @@ describe('agent classification', () => {
     expect(SUBAGENT_NAMES).not.toContain('orchestrator');
     expect(SUBAGENT_NAMES).toContain('explorer');
     expect(SUBAGENT_NAMES).toContain('fixer');
+    expect(SUBAGENT_NAMES).toContain('steward');
+    expect(SUBAGENT_NAMES).toContain('frame');
   });
 
   test('getAgentConfigs applies correct classification visibility and mode', () => {
@@ -311,11 +315,13 @@ describe('createAgents', () => {
     expect(names).toContain('oracle');
     expect(names).toContain('librarian');
     expect(names).toContain('fixer');
+    expect(names).toContain('steward');
+    expect(names).toContain('frame');
   });
 
-  test('creates exactly 6 agents (1 orchestrator + 5 subagents)', () => {
+  test('creates exactly 8 agents (1 orchestrator + 7 subagents)', () => {
     const agents = createAgents();
-    expect(agents.length).toBe(6);
+    expect(agents.length).toBe(8);
   });
 });
 
@@ -513,6 +519,8 @@ describe('disabled_agents', () => {
     expect(names).toContain('explorer');
     expect(names).toContain('oracle');
     expect(names).toContain('librarian');
+    expect(names).toContain('steward');
+    expect(names).toContain('frame');
   });
 
   test('protected agents cannot be disabled', () => {
@@ -526,13 +534,13 @@ describe('disabled_agents', () => {
 
   test('agent count decreases when agents are disabled', () => {
     const agents = createAgents();
-    expect(agents.length).toBe(6); // 1 orchestrator + 5 subagents
+    expect(agents.length).toBe(8); // 1 orchestrator + 7 subagents
 
     const disabledConfig: PluginConfig = {
       disabled_agents: ['designer'],
     };
     const disabledAgents = createAgents(disabledConfig);
-    expect(disabledAgents.length).toBe(5);
+    expect(disabledAgents.length).toBe(7);
   });
 
   test('getDisabledAgents respects protection rules', () => {
@@ -560,7 +568,7 @@ describe('disabled_agents', () => {
       disabled_agents: [],
     };
     const agents = createAgents(config);
-    expect(agents.length).toBe(6);
+    expect(agents.length).toBe(8);
     expect(agents.map((a) => a.name)).toEqual([
       'orchestrator',
       'explorer',
@@ -568,6 +576,8 @@ describe('disabled_agents', () => {
       'oracle',
       'designer',
       'fixer',
+      'steward',
+      'frame',
     ]);
   });
 });

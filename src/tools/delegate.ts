@@ -10,8 +10,11 @@ import {
   updateSnapshot,
 } from '../tui-state';
 import {
+  extractLatestUserImageParts,
   extractSessionResult,
+  normalizeImagePartsForChildPrompt,
   type PromptBody,
+  type PromptBodyPart,
   parseModelReference,
   promptWithTimeout,
 } from '../utils/session';
@@ -73,6 +76,7 @@ export function createDelegateTools(
     variant: string | undefined;
     promptText: string;
     timeout: number;
+    promptParts?: PromptBodyPart[];
   }): Promise<string> {
     const modelRef = parseModelReference(options.model);
     if (!modelRef) {
@@ -119,11 +123,15 @@ export function createDelegateTools(
         await new Promise((r) => setTimeout(r, TMUX_SPAWN_DELAY_MS));
       }
 
+      const parts: PromptBodyPart[] = options.promptParts?.length
+        ? [...options.promptParts, { type: 'text', text: options.promptText }]
+        : [{ type: 'text', text: options.promptText }];
+
       const body: PromptBody = {
         agent: options.agent,
         model: modelRef,
         tools: { task: false },
-        parts: [{ type: 'text', text: options.promptText }],
+        parts,
       };
 
       if (options.variant) {
@@ -218,6 +226,41 @@ export function createDelegateTools(
         return `Error: No model configured for agent "${agentName}"`;
       }
 
+      let frameImageParts: PromptBodyPart[] = [];
+      if (agentName === 'frame') {
+        const rawFrameParts = await extractLatestUserImageParts(
+          ctx.client,
+          parentSessionId,
+          directory,
+        );
+        frameImageParts = normalizeImagePartsForChildPrompt(
+          rawFrameParts,
+          directory,
+        );
+
+        if (rawFrameParts.length > 0 && frameImageParts.length === 0) {
+          return (
+            'Error: delegate_subagent(agent: "frame") saw image-related parts on the latest user message but could not build a child prompt ' +
+            '(no usable `url` and no resolvable `source.path` for a file attachment). ' +
+            'Try saving the image into the workspace and attaching it as a file, or check OpenCode attachment storage.'
+          );
+        }
+
+        if (frameImageParts.length === 0) {
+          return (
+            'Error: delegate_subagent(agent: "frame") found no image attachment parts on the latest user message. ' +
+            'OpenCode stores screenshots as parts with type `file` and mime `image/*` (not type `image`). ' +
+            'If the UI shows placeholders like [Image N] or “img clipboard” in text but this error appears, the session API did not receive file parts — try attaching through the image control, or check OpenCode/provider issues for clipboard vs file attachment.'
+          );
+        }
+      }
+
+      function partsForPrompt(promptText: string): PromptBodyPart[] {
+        return frameImageParts.length > 0
+          ? [...frameImageParts, { type: 'text', text: promptText }]
+          : [{ type: 'text', text: promptText }];
+      }
+
       if (mode === 'fire_forget') {
         const modelRef = parseModelReference(model);
         if (!modelRef) {
@@ -256,7 +299,7 @@ export function createDelegateTools(
             agent: agentName,
             model: modelRef,
             tools: { task: false },
-            parts: [{ type: 'text', text: args.prompt }],
+            parts: partsForPrompt(args.prompt),
           };
 
           if (effectiveVariant) {
@@ -287,6 +330,7 @@ export function createDelegateTools(
           variant: effectiveVariant,
           promptText: args.prompt,
           timeout: 0, // no timeout — let subagents run freely
+          promptParts: frameImageParts.length > 0 ? frameImageParts : undefined,
         });
 
         let output = `**${agentName}** (variant: ${effectiveVariant ?? 'default'}):\n\n`;

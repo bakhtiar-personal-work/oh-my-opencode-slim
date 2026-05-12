@@ -9,6 +9,8 @@ export const DEFAULT_AGENT_MCPS: Record<AgentName, string[]> = {
   librarian: ['websearch', 'context7', 'grep_app', 'github'],
   explorer: [],
   fixer: ['*'],
+  steward: [],
+  frame: [],
 };
 
 /**

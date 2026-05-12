@@ -46,6 +46,29 @@ describe('buildOrchestratorPrompt', () => {
     expect(prompt).toContain('@oracle');
     expect(prompt).toContain('@designer');
     expect(prompt).toContain('@fixer');
+    expect(prompt).toContain('@steward');
+    expect(prompt).toContain('@frame');
+  });
+
+  test('includes question tool, oracle matrix, and steward/frame protocols', () => {
+    const prompt = buildOrchestratorPrompt();
+    expect(prompt).toContain('<user_clarification>');
+    expect(prompt).toContain('`question` tool');
+    expect(prompt).toContain('NEVER use **default (flash) + low**');
+    expect(prompt).toContain('<steward_protocol>');
+    expect(prompt).toContain('<frame_protocol>');
+  });
+
+  test('omits steward_protocol when steward disabled', () => {
+    const prompt = buildOrchestratorPrompt(new Set(['steward']));
+    expect(prompt).not.toContain('<steward_protocol>');
+    expect(prompt).toContain('<frame_protocol>');
+  });
+
+  test('omits frame_protocol when frame disabled', () => {
+    const prompt = buildOrchestratorPrompt(new Set(['frame']));
+    expect(prompt).toContain('<steward_protocol>');
+    expect(prompt).not.toContain('<frame_protocol>');
   });
 
   test('filters out disabled agent from description block', () => {
@@ -69,11 +92,29 @@ describe('buildOrchestratorPrompt', () => {
 
   test('all agents disabled, prompt still has structure', () => {
     const prompt = buildOrchestratorPrompt(
-      new Set(['explorer', 'librarian', 'oracle', 'designer', 'fixer']),
+      new Set([
+        'explorer',
+        'librarian',
+        'oracle',
+        'designer',
+        'fixer',
+        'steward',
+        'frame',
+      ]),
     );
     expect(prompt).toContain('<role>');
     expect(prompt).toContain('<constraints>');
     expect(prompt).toContain('<agents>');
+  });
+
+  test('filters validation routing when steward disabled', () => {
+    const prompt = buildOrchestratorPrompt(new Set(['steward']));
+    expect(prompt).not.toContain('Route in-repo agent');
+  });
+
+  test('filters steward parallel example when steward disabled', () => {
+    const prompt = buildOrchestratorPrompt(new Set(['steward']));
+    expect(prompt).not.toContain('@steward + @explorer');
   });
 
   test('injects oracle model names when provided', () => {
