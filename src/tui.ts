@@ -671,7 +671,8 @@ function buildOrchestratingRows(
       // Row 1: CTX | Row 2: CACHE total | Row 3: Input/Output | Row 4: Read/Write
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.accent }, [`${prefix}${metrics.ctxLabel} `]),
+          text({ fg: theme.textMuted }, [prefix]),
+          text({ fg: theme.accent }, [`${metrics.ctxLabel} `]),
           text({ fg: theme.text }, [metrics.ctxValue]),
         ]),
       );
@@ -680,13 +681,14 @@ function buildOrchestratingRows(
         (usageBySession[sessionID]?.cacheWrite ?? 0);
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.accent }, [`${prefix}${metrics.cacheLabel} `]),
+          text({ fg: theme.textMuted }, [prefix]),
+          text({ fg: theme.accent }, [`${metrics.cacheLabel} `]),
           text({ fg: theme.text }, [formatTokenExact(cacheTotalForRow)]),
         ]),
       );
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.text }, [prefix]),
+          text({ fg: theme.textMuted }, [prefix]),
           renderMetricPairRight(
             '↓',
             `Input ${metrics.ioInputAbbrev}`,
@@ -702,7 +704,7 @@ function buildOrchestratingRows(
       );
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.text }, [prefix]),
+          text({ fg: theme.textMuted }, [prefix]),
           renderMetricPairRight(
             '📖',
             `Read ${metrics.cacheReadAbbrev}`,
@@ -728,7 +730,8 @@ function buildOrchestratingRows(
           },
           [
             box({ flexDirection: 'row' }, [
-              text({ fg: theme.accent }, [`${prefix}${metrics.ctxLabel} `]),
+              text({ fg: theme.textMuted }, [prefix]),
+              text({ fg: theme.accent }, [`${metrics.ctxLabel} `]),
               text({ fg: theme.text }, [metrics.ctxValue]),
             ]),
             renderMetricPairRight(
@@ -755,7 +758,8 @@ function buildOrchestratingRows(
           },
           [
             box({ flexDirection: 'row' }, [
-              text({ fg: theme.accent }, [`${prefix}${metrics.cacheLabel} `]),
+              text({ fg: theme.textMuted }, [prefix]),
+              text({ fg: theme.accent }, [`${metrics.cacheLabel} `]),
               text({ fg: theme.text }, [metrics.cacheValue]),
             ]),
             renderMetricPairRight(
@@ -787,19 +791,21 @@ function buildOrchestratingRows(
     if (isChild) {
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ TOTAL `]),
+          text({ fg: theme.textMuted }, [prefix]),
+          text({ fg: SIGMA_TOTAL_COLOR }, ['Σ TOTAL ']),
           text({ fg: theme.text }, [formatTokenExact(totalIo)]),
         ]),
       );
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ CACHE `]),
+          text({ fg: theme.textMuted }, [prefix]),
+          text({ fg: SIGMA_TOTAL_COLOR }, ['Σ CACHE ']),
           text({ fg: theme.text }, [formatTokenAbbrev(totalCache)]),
         ]),
       );
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.text }, [prefix]),
+          text({ fg: theme.textMuted }, [prefix]),
           renderMetricPairRight(
             '↓',
             `Input ${formatTokenAbbrev(totals.inputTotal)}`,
@@ -815,7 +821,7 @@ function buildOrchestratingRows(
       );
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
-          text({ fg: theme.text }, [prefix]),
+          text({ fg: theme.textMuted }, [prefix]),
           renderMetricPairRight(
             '📖',
             `Read ${formatTokenAbbrev(totals.cacheRead)}`,
@@ -841,7 +847,8 @@ function buildOrchestratingRows(
           },
           [
             box({ flexDirection: 'row' }, [
-              text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ TOTAL `]),
+              text({ fg: theme.textMuted }, [prefix]),
+              text({ fg: SIGMA_TOTAL_COLOR }, ['Σ TOTAL ']),
               text({ fg: theme.text }, [formatTokenExact(totalIo)]),
             ]),
             renderMetricPairRight(
@@ -868,7 +875,8 @@ function buildOrchestratingRows(
           },
           [
             box({ flexDirection: 'row' }, [
-              text({ fg: SIGMA_TOTAL_COLOR }, [`${prefix}Σ CACHE `]),
+              text({ fg: theme.textMuted }, [prefix]),
+              text({ fg: SIGMA_TOTAL_COLOR }, ['Σ CACHE ']),
               text({ fg: theme.text }, [formatTokenAbbrev(totalCache)]),
             ]),
             renderMetricPairRight(
@@ -961,8 +969,11 @@ function buildOrchestratingRows(
             justifyContent: 'space-between',
           },
           [
-            text({ fg: theme.text }, [
-              `${indentPrefix}${branchChar}─ ${indicator} ${child.agent}`,
+            box({ flexDirection: 'row', flexShrink: 0 }, [
+              text({ fg: theme.textMuted }, [
+                `${indentPrefix}${branchChar}─ `,
+              ]),
+              text({ fg: theme.text }, [`${indicator} ${child.agent}`]),
             ]),
             renderStatusLineWithOptionalTimer(childStatusText, theme),
           ],
@@ -970,8 +981,9 @@ function buildOrchestratingRows(
       );
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
+          text({ fg: theme.textMuted }, [detailPrefix]),
           text({ fg: theme.text }, [
-            `${detailPrefix}${truncate(childModel, 14)}${childVariant ? ` - ${childVariant}` : ''}`,
+            `${truncate(childModel, 14)}${childVariant ? ` - ${childVariant}` : ''}`,
           ]),
         ]),
       );
@@ -1030,8 +1042,11 @@ function buildOrchestratingRows(
           justifyContent: 'space-between',
         },
         [
-          text({ fg: theme.text }, [
-            `  ${modelStr}${orchVariant ? ` - ${orchVariant}` : ''}`,
+          box({ flexDirection: 'row', flexShrink: 0 }, [
+            text({ fg: theme.textMuted }, ['  ']),
+            text({ fg: theme.text }, [
+              `${modelStr}${orchVariant ? ` - ${orchVariant}` : ''}`,
+            ]),
           ]),
           text({ fg: getStatusColor(orchStatusText, theme) }, [orchStatusText]),
         ],
