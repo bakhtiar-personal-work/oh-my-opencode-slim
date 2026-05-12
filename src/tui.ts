@@ -1059,7 +1059,7 @@ function buildOrchestratingRows(
       rows.push(
         box({ width: '100%', flexDirection: 'row' }, [
           text({ fg: theme.textMuted }, [detailPrefix]),
-          text({ fg: theme.text }, [
+          text({ fg: theme.textMuted }, [
             formatSidebarModelAndVariant(
               child.model,
               childVariant,
