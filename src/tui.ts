@@ -26,9 +26,11 @@ const AGENT_SORT_PRIORITY: Record<string, number> = {
   orchestrator: 0,
   explorer: 1,
   librarian: 2,
-  fixer: 3,
-  oracle: 4,
-  designer: 5,
+  steward: 3,
+  fixer: 4,
+  oracle: 5,
+  designer: 6,
+  frame: 7,
 };
 
 type Child = JSX.Element | string | number | null | undefined | false;
