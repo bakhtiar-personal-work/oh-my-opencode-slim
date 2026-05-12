@@ -17,7 +17,8 @@ export const AGENT_DESCRIPTIONS: Record<string, string> = {
 </agent>`,
   oracle: `<agent name="@oracle">
 - Role: strategic analysis and code review specialist
-- Delegate when: any analysis—debugging, architecture, tradeoffs, risk, reviews—including trivial asks (use default flash + medium–max or smart + low–max per orchestrator matrix)
+- Delegate when: any technical analysis—debugging, architecture, tradeoffs, risk, code review—including trivial/light asks
+- Model/variant: per orchestrator oracle matrix (default flash: medium–max only; smart: low–max; never flash + low)
 </agent>`,
   designer: `<agent name="@designer">
 - Role: UI and UX specialist
@@ -27,7 +28,7 @@ export const AGENT_DESCRIPTIONS: Record<string, string> = {
   fixer: `<agent name="@fixer">
 - Role: implementation specialist
 - Delegate when: any code edit, test update, scoped execution task
-- Do not use when: discovery or strategy is still unresolved
+- Do not use when: discovery or strategy is still unresolved, or repo conventions are unknown—run @steward (or orchestrator fallback) first
 </agent>`,
   steward: `<agent name="@steward">
 - Role: in-repo agent rules and IDE policy discovery

@@ -50,8 +50,9 @@ describe('buildOrchestratorPrompt', () => {
     expect(prompt).toContain('@frame');
   });
 
-  test('includes question tool, oracle matrix, and steward/frame protocols', () => {
+  test('includes routing priority, question tool, oracle matrix, steward/frame', () => {
     const prompt = buildOrchestratorPrompt();
+    expect(prompt).toContain('<routing_priority>');
     expect(prompt).toContain('<user_clarification>');
     expect(prompt).toContain('`question` tool');
     expect(prompt).toContain('NEVER use **default (flash) + low**');

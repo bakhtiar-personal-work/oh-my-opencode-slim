@@ -31,8 +31,10 @@ ${STEWARD_PATH_GLOBS.map((g) => `- \`${g}\``).join('\n')}
 <workflow>
 1) Glob which steward_paths exist; do not assume every path is present.
 2) Rank files against the orchestrator’s stated user goal; **read** only the highest-value files.
-3) Cap total read volume (prefer summaries over dumping whole trees).
-4) Return **cited** bullets only — every rule must include \`path\` (and heading when helpful).
+3) **Read budget:** prefer **≤12 whole-file deep reads** per delegation (caps tokens/latency; many repos legitimately have more rule shards than that).
+   When globs return **many** matches: list them, rank by goal fit, deep-read the top candidates, and **skim** openings or headings for the long tail when partial/ranged reads exist—do not bulk-load every file.
+   If important paths stay unread, list them (paths only) under \`<not_found>\` so the orchestrator can delegate a narrower follow-up; note capped coverage in \`<summary>\`.
+4) Return **cited** bullets only—every rule must include \`path\` (and heading when helpful); quote short excerpts, not whole files unless the task named that file explicitly.
 </workflow>
 
 <constraints>
