@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   deleteSessionEntries,
+  flushTuiSnapshot,
   getTuiStatePath,
   mergedSessionUsage,
   normalizeProjectDirectory,
@@ -14,9 +15,11 @@ import {
   recordSessionNode,
   recordSessionProject,
   recordSessionUsage,
+  recordSessionUsagesBatch,
   recordSubscriptionUsage,
   removeSubscriptionUsageEntry,
   subscriptionUsageKey,
+  syncOpenCodeStatusesIntoSessionTree,
   updateSnapshot,
 } from './tui-state';
 
@@ -498,6 +501,248 @@ describe('pruneStaleTuiSessionBundles', () => {
     const gone = snap.sessions['root-p']?.tree['gone-child'];
     expect(gone?.status).toBe('idle');
     expect(gone?.usage).toBeUndefined();
+  });
+
+  test('second soft-prune does not bump finishedAt on already-idle ghost child', () => {
+    const projectDir = normalizeProjectDirectory(tempDir);
+    recordSessionProject({ sessionID: 'root-ghost2', projectPath: tempDir });
+    recordSessionNode({
+      sessionID: 'root-ghost2',
+      title: '',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'ghost-child-2',
+      title: '',
+      agent: 'explorer',
+      parentId: 'root-ghost2',
+      status: 'busy',
+    });
+
+    const opencode = new Set(['root-ghost2']);
+
+    updateSnapshot((s) => {
+      pruneStaleTuiSessionBundles(s, {
+        opencodeIds: opencode,
+        currentProjectDir: projectDir,
+        now: Date.now(),
+      });
+    });
+
+    const afterFirst =
+      readTuiSnapshot().sessions['root-ghost2']?.tree['ghost-child-2'];
+    expect(afterFirst?.status).toBe('idle');
+    const t1 = afterFirst?.finishedAt;
+    expect(t1).toBeDefined();
+
+    updateSnapshot((s) => {
+      pruneStaleTuiSessionBundles(s, {
+        opencodeIds: opencode,
+        currentProjectDir: projectDir,
+        now: Date.now(),
+      });
+    });
+
+    const afterSecond =
+      readTuiSnapshot().sessions['root-ghost2']?.tree['ghost-child-2'];
+    expect(afterSecond?.finishedAt).toBe(t1);
+  });
+
+  test('does not soft-prune child still listed in OpenCode when parent missing from poll', () => {
+    const projectDir = normalizeProjectDirectory(tempDir);
+    recordSessionProject({ sessionID: 'root-flicker', projectPath: tempDir });
+    recordSessionNode({
+      sessionID: 'root-flicker',
+      title: '',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'child-flicker',
+      title: '',
+      agent: 'explorer',
+      parentId: 'root-flicker',
+      status: 'busy',
+    });
+
+    updateSnapshot((s) => {
+      syncOpenCodeStatusesIntoSessionTree(s, {
+        'child-flicker': { type: 'busy' },
+      });
+      pruneStaleTuiSessionBundles(s, {
+        opencodeIds: new Set(['child-flicker']),
+        currentProjectDir: projectDir,
+        now: Date.now(),
+      });
+    });
+
+    const snap = readTuiSnapshot();
+    expect(snap.sessions['root-flicker']?.tree['child-flicker']?.status).toBe(
+      'busy',
+    );
+    const parent = snap.sessions['root-flicker']?.tree['root-flicker'];
+    expect(parent?.status).toBe('busy');
+    expect(parent?.finishedAt).toBeUndefined();
+  });
+
+  test('keeps orchestration sigma when orchestrator row missing from poll but child listed', () => {
+    const projectDir = normalizeProjectDirectory(tempDir);
+    recordSessionProject({ sessionID: 'root-sigma', projectPath: tempDir });
+    recordSessionNode({
+      sessionID: 'root-sigma',
+      title: '',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'child-sigma',
+      title: '',
+      agent: 'explorer',
+      parentId: 'root-sigma',
+      status: 'busy',
+    });
+    recordSessionUsage({
+      sessionID: 'child-sigma',
+      contextUsed: 100,
+      contextLimit: 400,
+      contextPct: 25,
+      input: 50,
+      output: 20,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    });
+
+    expect(
+      readTuiSnapshot().sessions['root-sigma']?.orchestrationSigmaAccum?.input,
+    ).toBe(50);
+
+    updateSnapshot((s) => {
+      syncOpenCodeStatusesIntoSessionTree(s, {
+        'child-sigma': { type: 'busy' },
+      });
+      pruneStaleTuiSessionBundles(s, {
+        opencodeIds: new Set(['child-sigma']),
+        currentProjectDir: projectDir,
+        now: Date.now(),
+      });
+    });
+
+    const snap = readTuiSnapshot();
+    expect(snap.sessions['root-sigma']?.orchestrationSigmaAccum?.input).toBe(
+      50,
+    );
+    expect(snap.sessions['root-sigma']?.tree['root-sigma']?.status).toBe(
+      'busy',
+    );
+  });
+});
+
+describe('tui-state concurrent persistence', () => {
+  test('microtask storm of recordSessionUsage retains all sessions and sigma', async () => {
+    recordSessionNode({
+      sessionID: 'storm-orch',
+      title: '',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    const n = 12;
+    for (let i = 0; i < n; i++) {
+      recordSessionNode({
+        sessionID: `storm-child-${i}`,
+        title: '',
+        agent: 'explorer',
+        parentId: 'storm-orch',
+        status: 'busy',
+      });
+    }
+
+    await Promise.all(
+      Array.from({ length: n }, (_, i) =>
+        Promise.resolve().then(() =>
+          recordSessionUsage({
+            sessionID: `storm-child-${i}`,
+            contextUsed: 50 + i,
+            contextLimit: 200,
+            contextPct: 25,
+            input: 10 + i,
+            output: 5,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }),
+        ),
+      ),
+    );
+    await flushTuiSnapshot();
+
+    const snap = readTuiSnapshot();
+    const bundle = snap.sessions['storm-orch'];
+    expect(bundle).toBeDefined();
+
+    let expectedInput = 0;
+    for (let i = 0; i < n; i++) {
+      const node = bundle?.tree[`storm-child-${i}`];
+      expect(node).toBeDefined();
+      expect(node?.usage?.input).toBe(10 + i);
+      expectedInput += 10 + i;
+    }
+
+    expect(bundle?.orchestrationSigmaAccum?.input).toBe(expectedInput);
+  });
+
+  test('recordSessionUsagesBatch applies all rows in one write', () => {
+    recordSessionNode({
+      sessionID: 'orch-b',
+      title: '',
+      agent: 'orchestrator',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'b1',
+      title: '',
+      agent: 'explorer',
+      parentId: 'orch-b',
+      status: 'busy',
+    });
+    recordSessionNode({
+      sessionID: 'b2',
+      title: '',
+      agent: 'librarian',
+      parentId: 'orch-b',
+      status: 'busy',
+    });
+
+    recordSessionUsagesBatch([
+      {
+        sessionID: 'b1',
+        contextUsed: 40,
+        contextLimit: 200,
+        contextPct: 20,
+        input: 20,
+        output: 10,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      {
+        sessionID: 'b2',
+        contextUsed: 60,
+        contextLimit: 200,
+        contextPct: 30,
+        input: 30,
+        output: 15,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+    ]);
+
+    const snap = readTuiSnapshot();
+    expect(mergedSessionUsage(snap).b1?.input).toBe(20);
+    expect(mergedSessionUsage(snap).b2?.input).toBe(30);
+    expect(snap.sessions['orch-b']?.orchestrationSigmaAccum?.input).toBe(50);
   });
 });
 

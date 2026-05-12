@@ -4,10 +4,8 @@ import type { PluginConfig } from '../config';
 import { ALL_AGENT_NAMES, TMUX_SPAWN_DELAY_MS } from '../config/constants';
 import { getAgentOverride } from '../config/utils';
 import {
+  recordDelegatedSubagentSession,
   recordSessionDone,
-  recordSessionNode,
-  sessionTreeStore,
-  updateSnapshot,
 } from '../tui-state';
 import {
   extractLatestUserImageParts,
@@ -44,28 +42,13 @@ export function createDelegateTools(
     variant?: string,
     mode?: 'blocking' | 'fire_forget',
   ): void {
-    recordSessionNode({
+    recordDelegatedSubagentSession({
       sessionID: sessionId,
-      title: '',
+      parentSessionId,
       agent,
       variant,
-      parentId: parentSessionId,
       mode,
     });
-    updateSnapshot((snapshot) => {
-      for (const bundle of Object.values(snapshot.sessions)) {
-        const parent = bundle.tree[parentSessionId];
-        if (!parent) continue;
-        if (!parent.childIds.includes(sessionId)) {
-          parent.childIds.push(sessionId);
-        }
-        bundle.lastActivityAt = Date.now();
-      }
-    });
-    const storeParent = sessionTreeStore[parentSessionId];
-    if (storeParent && !storeParent.childIds.includes(sessionId)) {
-      storeParent.childIds.push(sessionId);
-    }
   }
 
   async function runAgentSession(options: {

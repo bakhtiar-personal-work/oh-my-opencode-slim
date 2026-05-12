@@ -52,13 +52,16 @@ import {
   normalizeProjectDirectory,
   patchSessionTreeStatusFromOpenCode,
   pruneStaleTuiSessionBundles,
+  type RecordSessionUsageInput,
   readTuiSnapshot,
+  recordChildSessionSnapshot,
   recordSessionDone,
   recordSessionEnd,
   recordSessionModel,
   recordSessionNode,
   recordSessionProject,
   recordSessionUsage,
+  recordSessionUsagesBatch,
   recordSessionVariant,
   sessionTreeStore,
   syncOpenCodeStatusesIntoSessionTree,
@@ -216,15 +219,14 @@ async function ensureModelContextLimits(client: {
 }
 
 /**
- * Refresh usage telemetry for a single session by fetching its messages
- * and re-summing token data. Best-effort: errors are silently caught.
- * Called during reconciliation so the sidebar shows latest values on
- * app startup.
+ * Compute usage telemetry for one session (messages fetch). Used by
+ * reconciliation; persists via {@link recordSessionUsagesBatch} so we do not
+ * N-compete on tui-state.json.
  */
-async function refreshSessionUsage(
+async function computeSessionUsageForReconcile(
   ctx: Parameters<Plugin>[0],
   sessionID: string,
-): Promise<void> {
+): Promise<RecordSessionUsageInput | null> {
   try {
     const messagesResult = await ctx.client.session.messages({
       path: { id: sessionID },
@@ -286,7 +288,7 @@ async function refreshSessionUsage(
     }
 
     if (contextUsed > 0 || totalInput > 0 || totalOutput > 0) {
-      recordSessionUsage({
+      return {
         sessionID,
         contextUsed,
         contextLimit,
@@ -296,10 +298,11 @@ async function refreshSessionUsage(
         reasoning: totalReasoning,
         cacheRead: totalCacheRead,
         cacheWrite: totalCacheWrite,
-      });
+      };
     }
+    return null;
   } catch {
-    // Best-effort for sidebar display - don't fail reconciliation
+    return null;
   }
 }
 
@@ -549,9 +552,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         }
 
         const activeIds = Object.keys(statuses);
-        await Promise.allSettled(
-          activeIds.map((sid) => refreshSessionUsage(ctx, sid)),
+        const usageResults = await Promise.allSettled(
+          activeIds.map((sid) => computeSessionUsageForReconcile(ctx, sid)),
         );
+        const usageBatch: RecordSessionUsageInput[] = [];
+        for (const r of usageResults) {
+          if (r.status === 'fulfilled' && r.value) {
+            usageBatch.push(r.value);
+          }
+        }
+        recordSessionUsagesBatch(usageBatch);
 
         usageService?.refresh(false).catch(() => {});
       } catch {
@@ -1193,35 +1203,12 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
           depthTracker.registerChild(parentSessionId, childSessionId);
         }
         if (childSessionId) {
-          recordSessionNode({
+          recordChildSessionSnapshot({
             sessionID: childSessionId,
             title: title ?? '',
-            agent: '',
-            parentId: parentSessionId,
-          });
-        }
-        if (childSessionId && parentSessionId) {
-          // Add child to parent's childIds by rewriting the parent node
-          updateSnapshot((snapshot) => {
-            for (const bundle of Object.values(snapshot.sessions)) {
-              const parent = bundle.tree[parentSessionId];
-              if (!parent) continue;
-              if (!parent.childIds.includes(childSessionId)) {
-                parent.childIds.push(childSessionId);
-              }
-              bundle.lastActivityAt = Date.now();
-            }
-          });
-          // Also sync the in-memory store so childIds are available
-          const storeParent = sessionTreeStore[parentSessionId];
-          if (storeParent && !storeParent.childIds.includes(childSessionId)) {
-            storeParent.childIds.push(childSessionId);
-          }
-        }
-        if (childSessionId && directory) {
-          recordSessionProject({
-            sessionID: childSessionId,
-            projectPath: directory,
+            parentSessionId:
+              typeof parentSessionId === 'string' ? parentSessionId : undefined,
+            projectPath: directory ? directory : undefined,
           });
         }
       }

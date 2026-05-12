@@ -311,8 +311,12 @@ function pruneSessionSidDataInBundle(
 ): void {
   const node = bundle.tree[sid];
   if (node) {
+    const needsFlashStart =
+      node.status !== 'idle' || node.finishedAt === undefined;
     node.status = 'idle';
-    node.finishedAt = Date.now();
+    if (needsFlashStart) {
+      node.finishedAt = Date.now();
+    }
     delete node.usage;
   }
   delete bundle.orchestrationUsageLastSeen[sid];
@@ -347,6 +351,45 @@ export function expandMissingSessionCascade(
   return ids;
 }
 
+/** True if `descendantCandidate` is not `ancestorId` and has `ancestorId` on its parent chain. */
+function isStrictDescendantInMergedTree(
+  mergedTree: Record<string, SessionNode>,
+  ancestorId: string,
+  descendantCandidate: string,
+): boolean {
+  if (ancestorId === descendantCandidate) return false;
+  let cur: string | undefined = descendantCandidate;
+  const visited = new Set<string>();
+  while (cur && !visited.has(cur)) {
+    visited.add(cur);
+    if (cur === ancestorId) return true;
+    cur = mergedTree[cur]?.parentId;
+  }
+  return false;
+}
+
+function softPruneTargetHasPollDescendant(
+  mergedTree: Record<string, SessionNode>,
+  targetSid: string,
+  opencodeIds: ReadonlySet<string>,
+): boolean {
+  for (const pollId of opencodeIds) {
+    if (isStrictDescendantInMergedTree(mergedTree, targetSid, pollId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Drop idle bundles (TTL, whole-tree gone from OpenCode) and soft-prune
+ * sessions missing from {@link input.opencodeIds}. Soft-prune skips any id
+ * still present in that set so incomplete polls cannot idle a busy child
+ * whose parent row was omitted. Ancestors are skipped while any polled id is
+ * still their descendant (avoids idling the orchestrator and clearing sigma
+ * when the poll omits the root). If incomplete polls persist, callers may add
+ * debouncing or skip soft-prune when poll cardinality collapses abruptly.
+ */
 export function pruneStaleTuiSessionBundles(
   snapshot: TuiSnapshot,
   input: {
@@ -399,6 +442,14 @@ export function pruneStaleTuiSessionBundles(
   const expandedMissing = expandMissingSessionCascade(merged, missingSeeds);
 
   for (const sid of expandedMissing) {
+    // OpenCode still lists this session — never wipe it as "missing" just
+    // because a parent id was absent from the poll (expandMissingSessionCascade
+    // would otherwise include busy children).
+    if (input.opencodeIds.has(sid)) continue;
+    if (softPruneTargetHasPollDescendant(merged, sid, input.opencodeIds)) {
+      continue;
+    }
+
     const projected = normalizedBundleProjectForSession(snapshot, sid);
     if (projected === undefined || projected !== projectMatched) continue;
 
@@ -625,12 +676,315 @@ function writeTuiSnapshot(snapshot: TuiSnapshot): void {
   }
 }
 
+/**
+ * Coalesces read–modify–write so overlapping callers never overwrite each
+ * other's in-flight edits; nested `updateSnapshot` shares one read+write
+ * within the same stack.
+ */
+let isDrainingSnapshot = false;
+const snapshotMutatorQueue: Array<(snapshot: TuiSnapshot) => void> = [];
+
 export function updateSnapshot(mutator: (snapshot: TuiSnapshot) => void): void {
-  const { snapshot, okForMutation } = tryReadSnapshot();
-  if (!okForMutation) return;
-  mutator(snapshot);
-  snapshot.updatedAt = Date.now();
-  writeTuiSnapshot(snapshot);
+  snapshotMutatorQueue.push(mutator);
+  if (isDrainingSnapshot) {
+    return;
+  }
+  isDrainingSnapshot = true;
+  try {
+    while (snapshotMutatorQueue.length > 0) {
+      try {
+        const { snapshot, okForMutation } = tryReadSnapshot();
+        if (!okForMutation) {
+          snapshotMutatorQueue.length = 0;
+          break;
+        }
+        while (snapshotMutatorQueue.length > 0) {
+          const m = snapshotMutatorQueue.shift();
+          if (m === undefined) {
+            break;
+          }
+          m(snapshot);
+        }
+        snapshot.updatedAt = Date.now();
+        writeTuiSnapshot(snapshot);
+      } catch {
+        snapshotMutatorQueue.length = 0;
+        break;
+      }
+    }
+  } finally {
+    isDrainingSnapshot = false;
+  }
+}
+
+/**
+ * Resolves after any pending synchronous `updateSnapshot` work on this thread
+ * has finished (writes are synchronous today).
+ */
+export function flushTuiSnapshot(): Promise<void> {
+  return Promise.resolve();
+}
+
+export type RecordSessionUsageInput = {
+  sessionID: string;
+  contextUsed?: number;
+  contextLimit?: number;
+  contextPct?: number;
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+};
+
+function applyRecordSessionUsageToSnapshot(
+  snapshot: TuiSnapshot,
+  input: RecordSessionUsageInput,
+): void {
+  let bundle: TuiSessionBundle | undefined;
+
+  const located = locateBundleForSession(snapshot, input.sessionID);
+  if (located) bundle = located.bundle;
+  else {
+    const rootFallback = resolveBundleRootForSession(snapshot, input.sessionID);
+    bundle = ensureBundle(snapshot, rootFallback);
+  }
+
+  const node = getOrCreateTreeNode(bundle, input.sessionID);
+  const prev = coerceSessionUsageEntry(node.usage);
+
+  const next: SessionUsageEntry = {
+    contextUsed:
+      input.contextUsed !== undefined
+        ? Math.max(prev?.contextUsed ?? 0, input.contextUsed)
+        : (prev?.contextUsed ?? 0),
+    contextLimit: input.contextLimit ?? prev?.contextLimit ?? 0,
+    contextPct:
+      input.contextPct !== undefined
+        ? Math.max(0, Math.min(100, input.contextPct))
+        : (prev?.contextPct ?? 0),
+    input:
+      input.input !== undefined
+        ? Math.max(prev?.input ?? 0, input.input)
+        : (prev?.input ?? 0),
+    output:
+      input.output !== undefined
+        ? Math.max(prev?.output ?? 0, input.output)
+        : (prev?.output ?? 0),
+    reasoning:
+      input.reasoning !== undefined
+        ? Math.max(prev?.reasoning ?? 0, input.reasoning)
+        : (prev?.reasoning ?? 0),
+    cacheRead:
+      input.cacheRead !== undefined
+        ? Math.max(prev?.cacheRead ?? 0, input.cacheRead)
+        : (prev?.cacheRead ?? 0),
+    cacheWrite:
+      input.cacheWrite !== undefined
+        ? Math.max(prev?.cacheWrite ?? 0, input.cacheWrite)
+        : (prev?.cacheWrite ?? 0),
+    updatedAt: Date.now(),
+  };
+  node.usage = next;
+  touchBundle(bundle);
+
+  const rootSessionID = resolveOrchestrationRootSessionID(
+    snapshot,
+    input.sessionID,
+  );
+  if (!rootSessionID) return;
+
+  const orchBundle = locateBundleForSession(snapshot, rootSessionID);
+  if (!orchBundle) return;
+
+  const previousSeen = orchBundle.bundle.orchestrationUsageLastSeen[
+    input.sessionID
+  ] ?? {
+    contextUsed: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+  };
+  const nextSeen: SessionUsageDeltaBasis = {
+    contextUsed: next.contextUsed,
+    input: next.input,
+    output: next.output,
+    cacheRead: next.cacheRead,
+    cacheWrite: next.cacheWrite,
+  };
+  const deltaContextUsed = Math.max(
+    0,
+    nextSeen.contextUsed - previousSeen.contextUsed,
+  );
+  const deltaInput = Math.max(0, nextSeen.input - previousSeen.input);
+  const deltaOutput = Math.max(0, nextSeen.output - previousSeen.output);
+  const deltaCacheRead = Math.max(
+    0,
+    nextSeen.cacheRead - previousSeen.cacheRead,
+  );
+  const deltaCacheWrite = Math.max(
+    0,
+    nextSeen.cacheWrite - previousSeen.cacheWrite,
+  );
+  const prevAccum = orchBundle.bundle.orchestrationSigmaAccum ?? {
+    contextUsed: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+  };
+  orchBundle.bundle.orchestrationSigmaAccum = {
+    contextUsed: prevAccum.contextUsed + deltaContextUsed,
+    input: prevAccum.input + deltaInput,
+    output: prevAccum.output + deltaOutput,
+    cacheRead: prevAccum.cacheRead + deltaCacheRead,
+    cacheWrite: prevAccum.cacheWrite + deltaCacheWrite,
+  };
+  orchBundle.bundle.orchestrationUsageLastSeen[input.sessionID] = nextSeen;
+  touchBundle(orchBundle.bundle);
+}
+
+export function recordSessionUsagesBatch(
+  inputs: RecordSessionUsageInput[],
+): void {
+  if (inputs.length === 0) return;
+  updateSnapshot((snapshot) => {
+    for (const input of inputs) {
+      applyRecordSessionUsageToSnapshot(snapshot, input);
+    }
+  });
+}
+
+/**
+ * One persisted write for delegate-spawned subagent: tree node + parent
+ * `childIds` + {@link sessionTreeStore} parent link.
+ */
+export function recordDelegatedSubagentSession(input: {
+  sessionID: string;
+  parentSessionId: string;
+  agent: string;
+  variant?: string;
+  mode?: 'blocking' | 'fire_forget';
+}): void {
+  updateSnapshot((snapshot) => {
+    const rootId = resolveBundleRootForSession(
+      snapshot,
+      input.sessionID,
+      input.parentSessionId,
+    );
+    const bundle = ensureBundle(snapshot, rootId);
+
+    const existing = sessionTreeStore[input.sessionID] ??
+      bundle.tree[input.sessionID] ?? {
+        title: '',
+        agent: '',
+        model: '',
+        childIds: [],
+        status: 'busy' as const,
+        createdAt: Date.now(),
+      };
+    const node: SessionNode = {
+      ...existing,
+      title: existing.title,
+      agent: input.agent || existing.agent,
+      model: existing.model,
+      variant: input.variant !== undefined ? input.variant : existing.variant,
+      parentId: input.parentSessionId,
+      mode: input.mode !== undefined ? input.mode : existing.mode,
+      status: existing.status,
+      createdAt: existing.createdAt,
+    };
+    bundle.tree[input.sessionID] = node;
+    sessionTreeStore[input.sessionID] = node;
+    touchBundle(bundle);
+
+    for (const b of Object.values(snapshot.sessions)) {
+      const parent = b.tree[input.parentSessionId];
+      if (!parent) continue;
+      if (!parent.childIds.includes(input.sessionID)) {
+        parent.childIds.push(input.sessionID);
+      }
+      b.lastActivityAt = Date.now();
+    }
+    const storeParent = sessionTreeStore[input.parentSessionId];
+    if (storeParent && !storeParent.childIds.includes(input.sessionID)) {
+      storeParent.childIds.push(input.sessionID);
+    }
+  });
+}
+
+/**
+ * One persisted write for `session.created`: node, optional parent `childIds`,
+ * optional project path.
+ */
+export function recordChildSessionSnapshot(input: {
+  sessionID: string;
+  title: string;
+  parentSessionId?: string;
+  projectPath?: string;
+}): void {
+  updateSnapshot((snapshot) => {
+    const rootId = resolveBundleRootForSession(
+      snapshot,
+      input.sessionID,
+      input.parentSessionId,
+    );
+    const bundle = ensureBundle(snapshot, rootId);
+
+    const existing = sessionTreeStore[input.sessionID] ??
+      bundle.tree[input.sessionID] ?? {
+        title: '',
+        agent: '',
+        model: '',
+        childIds: [],
+        status: 'busy' as const,
+        createdAt: Date.now(),
+      };
+    const node: SessionNode = {
+      ...existing,
+      title: input.title ?? existing.title,
+      agent: existing.agent,
+      model: existing.model,
+      variant: existing.variant,
+      parentId:
+        input.parentSessionId !== undefined
+          ? input.parentSessionId
+          : existing.parentId,
+      mode: existing.mode,
+      status: existing.status,
+      createdAt: existing.createdAt,
+    };
+    bundle.tree[input.sessionID] = node;
+    sessionTreeStore[input.sessionID] = node;
+    touchBundle(bundle);
+
+    if (input.parentSessionId) {
+      for (const b of Object.values(snapshot.sessions)) {
+        const parent = b.tree[input.parentSessionId];
+        if (!parent) continue;
+        if (!parent.childIds.includes(input.sessionID)) {
+          parent.childIds.push(input.sessionID);
+        }
+        b.lastActivityAt = Date.now();
+      }
+      const storeParent = sessionTreeStore[input.parentSessionId];
+      if (storeParent && !storeParent.childIds.includes(input.sessionID)) {
+        storeParent.childIds.push(input.sessionID);
+      }
+    }
+
+    if (input.projectPath !== undefined && input.projectPath.length > 0) {
+      const normalized = normalizeProjectDirectory(input.projectPath);
+      const rootForProject = resolveBundleRootForSession(
+        snapshot,
+        input.sessionID,
+      );
+      const projectBundle = ensureBundle(snapshot, rootForProject);
+      projectBundle.projectPath = normalized;
+      touchBundle(projectBundle);
+    }
+  });
 }
 
 export function patchSessionTreeStatusFromOpenCode(
@@ -758,123 +1112,9 @@ function resolveOrchestrationRootSessionID(
   return null;
 }
 
-export function recordSessionUsage(input: {
-  sessionID: string;
-  contextUsed?: number;
-  contextLimit?: number;
-  contextPct?: number;
-  input: number;
-  output: number;
-  reasoning: number;
-  cacheRead: number;
-  cacheWrite: number;
-}): void {
+export function recordSessionUsage(input: RecordSessionUsageInput): void {
   updateSnapshot((snapshot) => {
-    let bundle: TuiSessionBundle | undefined;
-
-    const located = locateBundleForSession(snapshot, input.sessionID);
-    if (located) bundle = located.bundle;
-    else {
-      const rootFallback = resolveBundleRootForSession(
-        snapshot,
-        input.sessionID,
-      );
-      bundle = ensureBundle(snapshot, rootFallback);
-    }
-
-    const node = getOrCreateTreeNode(bundle, input.sessionID);
-    const prev = coerceSessionUsageEntry(node.usage);
-
-    const next: SessionUsageEntry = {
-      contextUsed:
-        input.contextUsed !== undefined
-          ? Math.max(prev?.contextUsed ?? 0, input.contextUsed)
-          : (prev?.contextUsed ?? 0),
-      contextLimit: input.contextLimit ?? prev?.contextLimit ?? 0,
-      contextPct:
-        input.contextPct !== undefined
-          ? Math.max(0, Math.min(100, input.contextPct))
-          : (prev?.contextPct ?? 0),
-      input:
-        input.input !== undefined
-          ? Math.max(prev?.input ?? 0, input.input)
-          : (prev?.input ?? 0),
-      output:
-        input.output !== undefined
-          ? Math.max(prev?.output ?? 0, input.output)
-          : (prev?.output ?? 0),
-      reasoning:
-        input.reasoning !== undefined
-          ? Math.max(prev?.reasoning ?? 0, input.reasoning)
-          : (prev?.reasoning ?? 0),
-      cacheRead:
-        input.cacheRead !== undefined
-          ? Math.max(prev?.cacheRead ?? 0, input.cacheRead)
-          : (prev?.cacheRead ?? 0),
-      cacheWrite:
-        input.cacheWrite !== undefined
-          ? Math.max(prev?.cacheWrite ?? 0, input.cacheWrite)
-          : (prev?.cacheWrite ?? 0),
-      updatedAt: Date.now(),
-    };
-    node.usage = next;
-    touchBundle(bundle);
-
-    const rootSessionID = resolveOrchestrationRootSessionID(
-      snapshot,
-      input.sessionID,
-    );
-    if (!rootSessionID) return;
-
-    const orchBundle = locateBundleForSession(snapshot, rootSessionID);
-    if (!orchBundle) return;
-
-    const previousSeen = orchBundle.bundle.orchestrationUsageLastSeen[
-      input.sessionID
-    ] ?? {
-      contextUsed: 0,
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    };
-    const nextSeen: SessionUsageDeltaBasis = {
-      contextUsed: next.contextUsed,
-      input: next.input,
-      output: next.output,
-      cacheRead: next.cacheRead,
-      cacheWrite: next.cacheWrite,
-    };
-    const deltaContextUsed = Math.max(
-      0,
-      nextSeen.contextUsed - previousSeen.contextUsed,
-    );
-    const deltaInput = Math.max(0, nextSeen.input - previousSeen.input);
-    const deltaOutput = Math.max(0, nextSeen.output - previousSeen.output);
-    const deltaCacheRead = Math.max(
-      0,
-      nextSeen.cacheRead - previousSeen.cacheRead,
-    );
-    const deltaCacheWrite = Math.max(
-      0,
-      nextSeen.cacheWrite - previousSeen.cacheWrite,
-    );
-    const prevAccum = orchBundle.bundle.orchestrationSigmaAccum ?? {
-      contextUsed: 0,
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    };
-    orchBundle.bundle.orchestrationSigmaAccum = {
-      contextUsed: prevAccum.contextUsed + deltaContextUsed,
-      input: prevAccum.input + deltaInput,
-      output: prevAccum.output + deltaOutput,
-      cacheRead: prevAccum.cacheRead + deltaCacheRead,
-      cacheWrite: prevAccum.cacheWrite + deltaCacheWrite,
-    };
-    orchBundle.bundle.orchestrationUsageLastSeen[input.sessionID] = nextSeen;
-    touchBundle(orchBundle.bundle);
+    applyRecordSessionUsageToSnapshot(snapshot, input);
   });
 }
 
