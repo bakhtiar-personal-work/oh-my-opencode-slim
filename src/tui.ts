@@ -40,7 +40,7 @@ const SIDEBAR_MODEL_DISPLAY_MAX = 20;
  * Orchestrating panel — root session (orchestrator row only).
  * Tune independently from child rows and from the Agents sidebar.
  */
-const ORCH_ROOT_TITLE_DISPLAY_MAX = 26;
+const ORCH_ROOT_TITLE_DISPLAY_MAX = 24;
 const ORCH_ROOT_SESSION_ID_DISPLAY_MAX = 27;
 /** Hyphen-segment model id cap (incl. ellipsis); OpenCode variant suffix stays full. */
 const ORCH_ROOT_MODEL_DISPLAY_MAX = 28;
@@ -719,7 +719,6 @@ function buildOrchestratingRows(
     accent: unknown;
     error?: unknown;
   },
-  durationNow: number,
 ): [string, ...Child[]] {
   const tree = mergedSessionTree(snapshot);
   const usageBySession = mergedSessionUsage(snapshot);
@@ -1033,7 +1032,7 @@ function buildOrchestratingRows(
         snapshot,
         childId,
         child,
-        durationNow,
+        now,
       );
       const childVariant = child.variant;
       const detailPrefix = `${indentPrefix}${pipeChar}    `;
@@ -1106,7 +1105,7 @@ function buildOrchestratingRows(
           ]),
           text({ fg: theme.text }, [
             orchNode.status === 'busy' || orchNode.status === 'retry'
-              ? `(${formatDuration(durationNow - orchNode.createdAt)})`
+              ? `(${formatDuration(now - orchNode.createdAt)})`
               : '',
           ]),
         ],
@@ -1204,12 +1203,9 @@ function renderSidebar(
     textMuted: unknown;
     error?: unknown;
   },
-  secondTick: number,
-  startWallTime: number,
 ): JSX.Element {
   const now = Date.now();
   const mergedTreeSidebar = mergedSessionTree(snapshot);
-  const durationNow = startWallTime + secondTick * 1000;
   const sessions = getActiveSessions(snapshot, now);
   const totalActive = sessions.filter((s) => s.running).length;
   const spinner = getSpinnerChar(now);
@@ -1408,12 +1404,7 @@ function renderSidebar(
     agentRows.push(text({ fg: theme.textMuted }, ['No active agents']));
   }
 
-  const orchestratingRows = buildOrchestratingRows(
-    snapshot,
-    now,
-    theme,
-    durationNow,
-  );
+  const orchestratingRows = buildOrchestratingRows(snapshot, now, theme);
 
   // Build usage panel rows
   const usageRows = renderSubscriptionPanel(snapshot, theme);
@@ -1444,64 +1435,64 @@ function renderSidebar(
       ...agentRows,
       ...(orchestratingRows.length > 0
         ? [
-            box({ width: '100%', height: 1 }),
-            box(
-              {
-                width: '100%',
-                flexDirection: 'column',
-                border: BORDER,
-                borderColor: theme.borderActive,
-                paddingTop: 0,
-                paddingBottom: 0,
-                paddingLeft: 0,
-                paddingRight: 0,
-              },
-              [
-                box(
-                  {
-                    width: '100%',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                  },
-                  [
-                    text({ fg: theme.text }, ['Orchestrating']),
-                    text({ fg: theme.textMuted }, [
-                      `[${orchestratingRows[0] as string}]`,
-                    ]),
-                  ],
-                ),
-                ...(orchestratingRows.slice(1) as Child[]),
-              ],
-            ),
-          ]
+          box({ width: '100%', height: 1 }),
+          box(
+            {
+              width: '100%',
+              flexDirection: 'column',
+              border: BORDER,
+              borderColor: theme.borderActive,
+              paddingTop: 0,
+              paddingBottom: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+            },
+            [
+              box(
+                {
+                  width: '100%',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                },
+                [
+                  text({ fg: theme.text }, ['Orchestrating']),
+                  text({ fg: theme.textMuted }, [
+                    `[${orchestratingRows[0] as string}]`,
+                  ]),
+                ],
+              ),
+              ...(orchestratingRows.slice(1) as Child[]),
+            ],
+          ),
+        ]
         : []),
       ...(usageRows.length > 0
         ? [
-            box({ width: '100%', height: 1 }),
-            box(
-              {
-                width: '100%',
-                flexDirection: 'column',
-                border: BORDER,
-                borderColor: theme.borderActive,
-                paddingTop: 0,
-                paddingBottom: 0,
-                paddingLeft: 0,
-                paddingRight: 0,
-              },
-              [
-                box(
-                  {
-                    width: '100%',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                  },
-                  [text({ fg: theme.text }, ['API Usage'])],
-                ),
-                ...(usageRows as Child[]),
-              ],
-            ),
-          ]
+          box({ width: '100%', height: 1 }),
+          box(
+            {
+              width: '100%',
+              flexDirection: 'column',
+              border: BORDER,
+              borderColor: theme.borderActive,
+              paddingTop: 0,
+              paddingBottom: 0,
+              paddingLeft: 0,
+              paddingRight: 0,
+            },
+            [
+              box(
+                {
+                  width: '100%',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                },
+                [text({ fg: theme.text }, ['API Usage'])],
+              ),
+              ...(usageRows as Child[]),
+            ],
+          ),
+        ]
         : []),
     ],
   );
@@ -1512,8 +1503,6 @@ const plugin: TuiPluginModule & { id: string } = {
   tui: async (api, _options, _meta) => {
     const [snapshot, setSnapshot] = createSignal(readTuiSnapshot());
     const [tick, setTick] = createSignal(0);
-    const [secondTick, setSecondTick] = createSignal(0);
-    const startWallTime = Date.now();
 
     const dataTimer = setInterval(async () => {
       try {
@@ -1527,14 +1516,9 @@ const plugin: TuiPluginModule & { id: string } = {
       setTick(tick() + 1);
     }, 50);
 
-    const secondTimer = setInterval(() => {
-      setSecondTick(secondTick() + 1);
-    }, 1000);
-
     api.lifecycle.onDispose(() => {
       clearInterval(dataTimer);
       clearInterval(animTimer);
-      clearInterval(secondTimer);
     });
 
     api.slots.register({
@@ -1542,13 +1526,7 @@ const plugin: TuiPluginModule & { id: string } = {
       slots: {
         sidebar_content() {
           tick();
-          secondTick();
-          return renderSidebar(
-            snapshot(),
-            api.theme.current,
-            secondTick(),
-            startWallTime,
-          );
+          return renderSidebar(snapshot(), api.theme.current);
         },
       },
     });
