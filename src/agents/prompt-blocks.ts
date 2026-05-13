@@ -24,8 +24,8 @@ export const STEWARD_PATH_GLOBS = [
 
 export const STEWARD_DOCS_EXCLUSION =
   '**Excluded:** wholesale `docs/**` (no leading dot) unless the ' +
-  'orchestrator says `AGENTS.md` / `AGENT.md` or the user explicitly ' +
-  'referenced it.';
+  'user explicitly referenced a specific file within it. ' +
+  '(`AGENTS.md` / `AGENT.md` at repo root are always read per step 1.)';
 
 export const STEWARD_VSCODE_OUT_OF_SCOPE =
   '**Out of scope:** `.vscode/**` (workspace noise).';
@@ -78,6 +78,28 @@ export const LIBRARIAN_VARIANT_SCOPE_LINES = [
   'medium: synthesize multiple sources and explain one key caveat',
   'high: provide deep multi-source comparison with explicit version ' +
   'matrix and conflict resolution',
+  'max: exhaustive cross-source research with full version matrix, ' +
+  'competing implementations, and ecosystem-wide context',
+] as const;
+
+// --- Frame ---
+
+export const FRAME_VARIANT_SCOPE_LINES = [
+  'low: single image — identify key elements and suggest one routing agent',
+  'medium: multi-image or complex diagram — cross-reference visible artifacts ' +
+  'and produce a structured routing recommendation',
+  'high: detailed technical breakdown of multiple screenshots or diagrams with ' +
+  'annotated findings and ordered routing chain',
+] as const;
+
+// --- Steward ---
+
+export const STEWARD_VARIANT_SCOPE_LINES = [
+  'low: check AGENTS.md / AGENT.md only; stop after root anchor files',
+  'medium: root anchor files plus ranked steward_paths relevant to the stated ' +
+  'goal (up to ~6 deep reads)',
+  'high: exhaustive scan of all steward_paths including .cursor/rules, ' +
+  '.opencode, .docs, and any secondary convention shards',
 ] as const;
 
 // --- Designer ---
@@ -88,6 +110,17 @@ export const DESIGNER_VARIANT_SCOPE_LINES = [
   'high: multi-page system-level UI patterns',
   'max: design-system-wide audit, cross-page consistency, and ' +
   'comprehensive accessibility validation',
+] as const;
+
+// --- Explorer ---
+
+export const EXPLORER_VARIANT_SCOPE_LINES = [
+  'low: locate one file/pattern in a known directory; single-concept search',
+  'medium: multi-directory cross-reference; find all callers/usages of a symbol',
+  'high: exhaustive codebase-wide usage analysis across all directories; ' +
+  'comprehensive dependency mapping (round cap does not apply; state coverage upfront)',
+  'max: not supported — explorer is a search and location agent; ' +
+  'use @oracle for deep analysis of discovered results',
 ] as const;
 
 // --- Fixer ---
@@ -111,20 +144,41 @@ export const ORACLE_VARIANT_OMITTED_DEFAULT_RULE =
 export const ORACLE_VARIANT_DEPTH_LINES = [
   'low: minimal rationale — **smart model only** (narrow follow-up once ' +
   'smart is warranted)',
-  'medium: bounded analysis; 1–3 files; clear problem statement (**minimum ' +
+  'medium: bounded analysis; 1-3 files; clear problem statement (**minimum ' +
   'depth for default/flash**)',
   'high: multi-file, moderate ambiguity, or flash+medium was incomplete',
   'max: security-critical, data-integrity, systemic risk, or last resort ' +
   'before giving up',
 ] as const;
 
-export const ORACLE_FLASH_CALLER_VARIANT_RULE =
-  '- **Default (flash) oracle:** callers must use **medium–max** only — ' +
-  'never pair flash with `low`.';
+export const ORACLE_SELF_AWARENESS_NOTE =
+  '- If you receive `variant: low` and your session model is a standard/flash ' +
+  'tier (not the smart/pro tier configured by the orchestrator), the depth may ' +
+  'be insufficient. Proceed at minimal depth and note the limitation in ' +
+  '`<confidence>` rather than refusing or stalling. If you infer you are the ' +
+  'smart tier but your capabilities feel limited for the task, surface that ' +
+  'discrepancy in `<confidence>` as well.';
 
-export const ORACLE_SMART_CALLER_VARIANT_RULE =
-  '- **Smart oracle:** callers may use **low–max** depending on reasoning ' +
-  'depth required.';
+/**
+ * Model-tier context block injected into oracle\'s own prompt.
+ * Explains when each tier is used so oracle can calibrate confidence and depth.
+ */
+export const ORACLE_MODEL_TIER_BLOCK = `<model_tier>
+The orchestrator operates two oracle tiers and selects one before delegating:
+- **default (flash):** standard debugging, scoped reviews, bounded analysis, no security impact — expects variant medium-max.
+- **smart (pro):** novel architecture, unclear root cause, cross-framework subtlety, security/concurrency risk, or escalation after a flash attempt was wrong or low-confidence — supports variant low-max.
+
+Deciding factors the orchestrator uses to pick the tier:
+1. Security or data-integrity risk → always smart.
+2. Novel/unclear root cause, concurrency, cross-framework subtlety → smart.
+3. Prior flash result was wrong or explicitly low-confidence → escalate to smart.
+4. Standard scoped debugging or review with no ambiguity → default.
+
+You cannot observe your own model name. Infer your likely tier from the variant received:
+- variant low → you are almost certainly the smart tier (flash + low is a misconfiguration).
+- variant max → high-stakes task; calibrate for security/systemic risk regardless of tier.
+- variant medium/high on a focused task → likely default tier; proceed at appropriate depth.
+</model_tier>`;
 
 /** Orchestrator headline under `<model_and_variant_selection>`. */
 export const ORACLE_ORCHESTRATOR_NEVER_FLASH_LOW =
@@ -135,8 +189,7 @@ export function formatOracleAgentVariantPolicyXml(): string {
   return `<variant_policy>
 ${ORACLE_VARIANT_OMITTED_DEFAULT_RULE}
 ${depth}
-${ORACLE_FLASH_CALLER_VARIANT_RULE}
-${ORACLE_SMART_CALLER_VARIANT_RULE}
+${ORACLE_SELF_AWARENESS_NOTE}
 </variant_policy>`;
 }
 

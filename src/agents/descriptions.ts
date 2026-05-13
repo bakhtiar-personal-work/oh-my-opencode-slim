@@ -18,7 +18,7 @@ export const AGENT_DESCRIPTIONS: Record<string, string> = {
   oracle: `<agent name="@oracle">
 - Role: strategic analysis and code review specialist
 - Delegate when: any technical analysis—debugging, architecture, tradeoffs, risk, code review—including trivial/light asks
-- Model/variant: per orchestrator oracle matrix (default flash: medium–max only; smart: low–max; never flash + low)
+- Model/variant: per orchestrator oracle matrix (default flash: medium-max only; smart: low-max; never flash + low)
 </agent>`,
   designer: `<agent name="@designer">
 - Role: UI and UX specialist

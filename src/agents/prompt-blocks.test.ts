@@ -3,9 +3,11 @@ import {
   buildFrameOrchestratorProtocolBlock,
   buildStewardOrchestratorProtocolBlock,
   DESIGNER_VARIANT_SCOPE_LINES,
+  FRAME_VARIANT_SCOPE_LINES,
   formatOrchestratorOracleVariantDepthSection,
   LIBRARIAN_VARIANT_SCOPE_LINES,
   STEWARD_PATH_GLOBS,
+  STEWARD_VARIANT_SCOPE_LINES,
 } from './prompt-blocks';
 
 describe('prompt-blocks', () => {
@@ -22,8 +24,22 @@ describe('prompt-blocks', () => {
   });
 
   test('librarian and designer variant lines stay aligned with orchestrator use', () => {
-    expect(LIBRARIAN_VARIANT_SCOPE_LINES.length).toBe(3);
+    expect(LIBRARIAN_VARIANT_SCOPE_LINES.length).toBe(4);
     expect(DESIGNER_VARIANT_SCOPE_LINES.length).toBe(4);
+  });
+
+  test('frame variant scope lines define low/medium/high', () => {
+    expect(FRAME_VARIANT_SCOPE_LINES.length).toBe(3);
+    expect(FRAME_VARIANT_SCOPE_LINES[0]).toMatch(/^low:/);
+    expect(FRAME_VARIANT_SCOPE_LINES[1]).toMatch(/^medium:/);
+    expect(FRAME_VARIANT_SCOPE_LINES[2]).toMatch(/^high:/);
+  });
+
+  test('steward variant scope lines define low/medium/high', () => {
+    expect(STEWARD_VARIANT_SCOPE_LINES.length).toBe(3);
+    expect(STEWARD_VARIANT_SCOPE_LINES[0]).toMatch(/^low:/);
+    expect(STEWARD_VARIANT_SCOPE_LINES[1]).toMatch(/^medium:/);
+    expect(STEWARD_VARIANT_SCOPE_LINES[2]).toMatch(/^high:/);
   });
 
   test('oracle variant depth section includes four depth tiers', () => {

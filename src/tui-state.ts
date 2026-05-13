@@ -97,7 +97,7 @@ export function mergedSessionTree(
   return out;
 }
 
-/** 0–100, from current context used ÷ limit (single source of truth for CTX %). */
+/** 0-100, from current context used ÷ limit (single source of truth for CTX %). */
 export function deriveSessionContextPct(used: number, limit: number): number {
   if (!(limit > 0)) return 0;
   if (!(Number.isFinite(used) && Number.isFinite(limit))) return 0;
@@ -685,7 +685,7 @@ function writeTuiSnapshot(snapshot: TuiSnapshot): void {
 }
 
 /**
- * Coalesces read–modify–write so overlapping callers never overwrite each
+ * Coalesces read-modify-write so overlapping callers never overwrite each
  * other's in-flight edits; nested `updateSnapshot` shares one read+write
  * within the same stack.
  */
