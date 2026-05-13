@@ -1,5 +1,6 @@
 import type { AgentDefinition } from './orchestrator';
 import { resolvePrompt } from './orchestrator';
+import { DESIGNER_VARIANT_SCOPE_LINES } from './prompt-blocks';
 
 const DESIGNER_PROMPT = `<role>
 You are Designer, a UI and UX specialist focused on polished, usable interfaces.
@@ -39,10 +40,7 @@ Use the project's idioms. Do NOT assume Tailwind unless evidence is present.
 </constraints>
 
 <variant_policy>
-- low: focused tweaks and small style corrections
-- medium: full-page redesign or new section layout
-- high: multi-page system-level UI patterns
-- max: design-system-wide audit, cross-page consistency, and comprehensive accessibility validation
+${DESIGNER_VARIANT_SCOPE_LINES.map((l) => `- ${l}`).join('\n')}
 </variant_policy>
 
 <output_format>

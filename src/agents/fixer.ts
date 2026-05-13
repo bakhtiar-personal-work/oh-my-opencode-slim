@@ -1,5 +1,6 @@
 import type { AgentDefinition } from './orchestrator';
 import { resolvePrompt } from './orchestrator';
+import { FIXER_VARIANT_POLICY_CAP_LINE } from './prompt-blocks';
 
 const FIXER_PROMPT = `<role>
 You are Fixer, a fast implementation specialist.
@@ -26,7 +27,7 @@ You are Fixer, a fast implementation specialist.
 <variant_policy>
 - low: single-file, single-function edit; bounded scope change
 - medium: multi-file change within one module; small refactor across 2-3 files
-- high/max: NOT supported — the orchestrator constrains fixer to low/medium. If high/max scope is needed, split into multiple low/medium fixer sessions.
+${FIXER_VARIANT_POLICY_CAP_LINE}
 </variant_policy>
 
 <insufficient_context>

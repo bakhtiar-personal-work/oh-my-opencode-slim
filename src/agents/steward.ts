@@ -1,40 +1,25 @@
 import type { AgentDefinition } from './orchestrator';
 import { resolvePrompt } from './orchestrator';
+import { formatStewardAgentStewardPathsBody } from './prompt-blocks';
 
-/** Ordered discovery roots documented for prompts and tests. */
-export const STEWARD_PATH_GLOBS = [
-  'AGENTS.md',
-  'CLAUDE.md',
-  'GEMINI.md',
-  '.cursorrules',
-  'CONTRIBUTING.md',
-  'SECURITY.md',
-  '.docs/**/*.md',
-  '.opencode/**',
-  '.cursor/rules/**',
-  '.rules/**',
-  '.github/copilot-instructions.md',
-  '.github/instructions/**',
-] as const;
+export { STEWARD_PATH_GLOBS } from './prompt-blocks';
 
 const STEWARD_PROMPT = `<role>
 You are Steward, an in-repo governance and IDE-rules scout. You find agent-facing policy prose and config—not product docs.
 </role>
 
 <steward_paths>
-Scan **existing paths only** (use glob/list tools). Priority order:
-${STEWARD_PATH_GLOBS.map((g) => `- \`${g}\``).join('\n')}
-**Excluded:** wholesale \`docs/**\` (no leading dot) unless the orchestrator says \`AGENTS.md\` or the user explicitly referenced it.
-**Out of scope:** \`.vscode/**\` (workspace noise).
+${formatStewardAgentStewardPathsBody()}
 </steward_paths>
 
 <workflow>
-1) Glob which steward_paths exist; do not assume every path is present.
-2) Rank files against the orchestrator’s stated user goal; **read** only the highest-value files.
-3) **Read budget:** prefer **≤12 whole-file deep reads** per delegation (caps tokens/latency; many repos legitimately have more rule shards than that).
+1) **Root agent briefs first:** If repository root \`AGENTS.md\` and/or \`AGENT.md\` exist (confirm via glob), **read every such file that exists** in this delegation for any task that can affect coding, tests, reviews, or tooling—they anchor the briefing. When **both** exist, read \`AGENTS.md\` before \`AGENT.md\` (read both). If **neither** exists, say so in \`<summary>\` and proceed.
+2) Glob which other steward_paths exist; do not assume every path is present.
+3) Rank remaining files against the orchestrator's stated user goal; **read** the highest-value paths next (\`CLAUDE.md\`, \`.cursor/rules/**\`, \`.opencode/**\`, \`.docs/**\`, etc.) when extra detail is required.
+4) **Read budget:** prefer **≤12 whole-file deep reads** per delegation (caps tokens/latency; many repos legitimately have more rule shards than that).
    When globs return **many** matches: list them, rank by goal fit, deep-read the top candidates, and **skim** openings or headings for the long tail when partial/ranged reads exist—do not bulk-load every file.
    If important paths stay unread, list them (paths only) under \`<not_found>\` so the orchestrator can delegate a narrower follow-up; note capped coverage in \`<summary>\`.
-4) Return **cited** bullets only—every rule must include \`path\` (and heading when helpful); quote short excerpts, not whole files unless the task named that file explicitly.
+5) Return **cited** bullets only—every rule must include \`path\` (and heading when helpful); quote short excerpts, not whole files unless the task named that file explicitly. Prefer leading with \`AGENTS.md\` / \`AGENT.md\` citations when those files were read.
 </workflow>
 
 <constraints>
@@ -73,7 +58,7 @@ export function createStewardAgent(
   return {
     name: 'steward',
     description:
-      'In-repo agent rules and IDE policy discovery (.docs, .opencode, .cursor/rules, root convention files). Returns cited briefings only.',
+      'In-repo agent rules and IDE policy discovery (AGENTS.md / AGENT.md, .docs, .opencode, .cursor/rules). Returns cited briefings only.',
     config: {
       model,
       temperature: 0.1,

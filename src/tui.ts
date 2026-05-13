@@ -1438,64 +1438,64 @@ function renderSidebar(
       ...agentRows,
       ...(orchestratingRows.length > 0
         ? [
-          box({ width: '100%', height: 1 }),
-          box(
-            {
-              width: '100%',
-              flexDirection: 'column',
-              border: BORDER,
-              borderColor: theme.borderActive,
-              paddingTop: 0,
-              paddingBottom: 0,
-              paddingLeft: 0,
-              paddingRight: 0,
-            },
-            [
-              box(
-                {
-                  width: '100%',
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                },
-                [
-                  text({ fg: theme.text }, ['Orchestrating']),
-                  text({ fg: theme.textMuted }, [
-                    `[${orchestratingRows[0] as string}]`,
-                  ]),
-                ],
-              ),
-              ...(orchestratingRows.slice(1) as Child[]),
-            ],
-          ),
-        ]
+            box({ width: '100%', height: 1 }),
+            box(
+              {
+                width: '100%',
+                flexDirection: 'column',
+                border: BORDER,
+                borderColor: theme.borderActive,
+                paddingTop: 0,
+                paddingBottom: 0,
+                paddingLeft: 0,
+                paddingRight: 0,
+              },
+              [
+                box(
+                  {
+                    width: '100%',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                  },
+                  [
+                    text({ fg: theme.text }, ['Orchestrating']),
+                    text({ fg: theme.textMuted }, [
+                      `[${orchestratingRows[0] as string}]`,
+                    ]),
+                  ],
+                ),
+                ...(orchestratingRows.slice(1) as Child[]),
+              ],
+            ),
+          ]
         : []),
       ...(usageRows.length > 0
         ? [
-          box({ width: '100%', height: 1 }),
-          box(
-            {
-              width: '100%',
-              flexDirection: 'column',
-              border: BORDER,
-              borderColor: theme.borderActive,
-              paddingTop: 0,
-              paddingBottom: 0,
-              paddingLeft: 0,
-              paddingRight: 0,
-            },
-            [
-              box(
-                {
-                  width: '100%',
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                },
-                [text({ fg: theme.text }, ['API Usage'])],
-              ),
-              ...(usageRows as Child[]),
-            ],
-          ),
-        ]
+            box({ width: '100%', height: 1 }),
+            box(
+              {
+                width: '100%',
+                flexDirection: 'column',
+                border: BORDER,
+                borderColor: theme.borderActive,
+                paddingTop: 0,
+                paddingBottom: 0,
+                paddingLeft: 0,
+                paddingRight: 0,
+              },
+              [
+                box(
+                  {
+                    width: '100%',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                  },
+                  [text({ fg: theme.text }, ['API Usage'])],
+                ),
+                ...(usageRows as Child[]),
+              ],
+            ),
+          ]
         : []),
     ],
   );

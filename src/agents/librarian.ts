@@ -1,5 +1,6 @@
 import type { AgentDefinition } from './orchestrator';
 import { resolvePrompt } from './orchestrator';
+import { LIBRARIAN_VARIANT_SCOPE_LINES } from './prompt-blocks';
 
 const LIBRARIAN_PROMPT = `<role>
 You are Librarian, a documentation and external research specialist.
@@ -32,9 +33,7 @@ You are Librarian, a documentation and external research specialist.
 </conflict_resolution>
 
 <variant_policy>
-- low: answer one focused question with minimal but direct citations
-- medium: synthesize multiple sources and explain one key caveat
-- high: provide deep multi-source comparison with explicit version matrix and conflict resolution
+${LIBRARIAN_VARIANT_SCOPE_LINES.map((l) => `- ${l}`).join('\n')}
 </variant_policy>
 
 <constraints>

@@ -33,7 +33,7 @@ export const AGENT_DESCRIPTIONS: Record<string, string> = {
   steward: `<agent name="@steward">
 - Role: in-repo agent rules and IDE policy discovery
 - Delegate when: feature/refactor/tooling work where local conventions may apply; ambiguous style or repo policy; before heavy oracle/fixer when rules unknown
-- Do not use when: pure codebase symbol search (use @explorer), external docs (use @librarian), or @steward is disabled—then fall back to @explorer globs for AGENTS/.docs only
+- Do not use when: pure codebase symbol search (use @explorer), external docs (use @librarian), or @steward is disabled—then fall back to @explorer globs for AGENTS.md / AGENT.md / .docs only
 </agent>`,
   frame: `<agent name="@frame">
 - Role: screenshot and attached-image analyst (errors, diagrams, repro captures)
