@@ -34,7 +34,6 @@ import { scrapeQuota } from './opencode-go-scraper';
 import type { SubscriptionProvider, SubscriptionUsageEntry } from './types';
 
 const SUBSCRIPTIONS_COMMAND = 'subscriptions';
-const GO_COMMAND = 'go'; // deprecated alias
 const DEFAULT_REFRESH_INTERVAL_MS = 60_000;
 const DEFAULT_PERIODIC_INTERVAL_MS = 600_000; // 10 minutes
 const PROVIDERS: SubscriptionProvider[] = ['opencode-go', 'neuralwatt'];
@@ -289,7 +288,7 @@ export class UsageService {
   }
 
   /**
-   * Handle slash commands: /subscriptions and /go (deprecated alias).
+   * Handle slash command: /subscriptions.
    */
   async handleCommandExecuteBefore(
     input: {
@@ -300,8 +299,6 @@ export class UsageService {
     output: { parts: Array<{ type: string; text?: string }> },
   ): Promise<void> {
     if (input.command === SUBSCRIPTIONS_COMMAND) {
-      await this.handleSubscriptionsCommand(input, output);
-    } else if (input.command === GO_COMMAND) {
       await this.handleSubscriptionsCommand(input, output);
     }
   }
@@ -613,8 +610,7 @@ export class UsageService {
               '  /subscriptions set-key <name> <api-key>                               Set API key for switching\n' +
               '  /subscriptions switch <provider> <name>                               Switch active account for provider\n' +
               '  /subscriptions list                                                  List all accounts\n' +
-              '  /subscriptions refresh                                               Force refresh all\n\n' +
-              'Deprecated: /go (alias for /subscriptions)',
+              '  /subscriptions refresh                                               Force refresh all',
           ),
         );
         break;
@@ -623,7 +619,7 @@ export class UsageService {
   }
 
   /**
-   * Register /subscriptions and /go commands in OpenCode config.
+   * Register /subscriptions command in OpenCode config.
    */
   registerCommand(opencodeConfig: Record<string, unknown>): void {
     const configCommand = opencodeConfig.command as
@@ -637,16 +633,6 @@ export class UsageService {
       (opencodeConfig.command as Record<string, unknown>)[
         SUBSCRIPTIONS_COMMAND
       ] = {
-        template:
-          'Manage subscription accounts (add-opencode-go, add-neuralwatt, remove, list, edit, set-key, switch, refresh)',
-        description:
-          'Add, remove, list, edit, set-key, switch, or refresh subscription accounts for usage tracking in the sidebar',
-      };
-    }
-
-    // Alias for /subscriptions
-    if (!configCommand?.[GO_COMMAND]) {
-      (opencodeConfig.command as Record<string, unknown>)[GO_COMMAND] = {
         template:
           'Manage subscription accounts (add-opencode-go, add-neuralwatt, remove, list, edit, set-key, switch, refresh)',
         description:
