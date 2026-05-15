@@ -3,6 +3,27 @@
  * Single source of truth for duplicated routing and variant policy copy.
  */
 
+/**
+ * Subagents use `<needs_user>`; orchestrator runs host `question` once and re-delegates.
+ * Shape matches OpenCode SDK `QuestionRequest.questions` / `QuestionInfo` (see
+ * `@opencode-ai/sdk` v2 types: `QuestionInfo`, `QuestionOption`).
+ */
+export const SUBAGENT_USER_CLARIFICATION_HANDOFF = `<orchestrator_clarification>
+If **user intent, scope, or preference** is ambiguous and blocks you: output **<needs_user>** with:
+- \`reason\` — one line why you cannot proceed without human input
+- \`questions\` — **one or more** items in **one** handoff (batch every clarification this turn so the UI does not ping-pong). Each item follows OpenCode \`QuestionInfo\`:
+  - \`header\` — very short UI label (≤30 chars)
+  - \`question\` — full question text
+  - \`options\` — 2–5 choices; each has \`label\` (1–5 words) and \`description\` (what choosing it means)
+  - optional \`multiple\`: true if the user may select more than one option for that question
+  - optional \`custom\`: set \`false\` only if free-typed answers must be disabled for that question
+
+- **No silent defaults:** If **two or more** reasonable paths exist and the pick depends on **user/product taste or priorities** (not a single verifiable repo or docs fact), do **not** choose the winner yourself—use **<needs_user>** and give every option a **\`description\`** that says **what that choice does** (UX outcome, tradeoff, maintenance, or product implication). When one path is **objectively** required (only API, security mandate, linter rule) or there is **one** clear evidence-backed winner, state it without asking.
+
+Do **not** call \`question\` yourself—the orchestrator must pass your fields into the host **\`question\`** tool (that call drives OpenCode’s picker). Reply only with **<needs_user>** in your output; **do not** address the human with a parallel bullet list of choices meant for manual chat reply (or they will bypass the UI). Missing tools/files or MCP failures → **<blocked>**, not **<needs_user>**.
+</orchestrator_clarification>
+`;
+
 // --- Steward ---
 
 /** Ordered discovery roots documented for prompts and tests. */
@@ -46,15 +67,15 @@ export function formatStewardAgentStewardPathsBody(): string {
 
 export function buildStewardOrchestratorProtocolBlock(): string {
   return `<steward_protocol>
-- **Mandatory first pass:** Unless the user turn is **pure orchestration/meta** only (how delegation works, repeating prior subagent output verbatim), run **one** blocking \`delegate_subagent(agent: "steward", ...)\` **before** @oracle, @fixer, or @designer when the work can affect **code, tests, reviews, or repo workflow**. Pure **discovery** ("where is X") may go to @explorer first; still run @steward **before** any @fixer session or mixed implementation handoff.
-- **Root agent briefs (\`AGENTS.md\` / \`AGENT.md\`):** Tell steward to **read each that exists at repo root**, **\`AGENTS.md\` before \`AGENT.md\`** when both exist (still read both), then broaden to other **.steward_paths** as needed for the goal—deeper scans are encouraged when rules may apply.
+- **Same triggers as <first_gate> item 1:** one blocking \`delegate_subagent(agent: "steward", ...)\` before @oracle / @fixer / @designer when work touches code, tests, reviews, or repo workflow; pure "where is X" may use @explorer first, but **@steward before any @fixer** (or mixed implementation).
+- **Steward prompt:** State the goal; require \`AGENTS.md\` then \`AGENT.md\` at root when present, then other steward_paths—no vague "check rules" delegations.
 - Steward scans **.steward_paths** (glob/list; existing paths only). Priority order:
 ${stewardGlobBulletList()}
 ${STEWARD_DOCS_EXCLUSION}
 ${STEWARD_VSCODE_OUT_OF_SCOPE}
-- Pass the user's goal verbatim plus orchestrator hints (areas: auth, UI, CI). Expect cited bullets only—**merge into @oracle / @fixer / @designer prompts** so downstream agents obey them.
-- **Rules handoff only:** Steward cites **.steward_paths** for downstream prompts. It does **not** replace opening stack-trace files/lines, product source inspection, **@explorer** location work, or **@oracle** technical analysis.
-- **Attribution:** Credit steward only for **cited** rules. Do not summarize steward as proving code-level root cause unless a steward_path doc states it verbatim (\`path\` + quoted excerpt)—otherwise **@explorer** / **@oracle** own diagnosis.
+- Goal + hints in prompt; **cited bullets only**—merge into @oracle / @fixer / @designer.
+- **Handoff only:** cites .steward_paths—**not** traces, product reads, @explorer search, or @oracle analysis.
+- **Attribution:** Rules need \`path\` + quote; do not claim steward *proved* code root cause unless the doc says so verbatim—**@explorer** / **@oracle** own diagnosis otherwise.
 </steward_protocol>
 
 `;

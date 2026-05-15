@@ -1,6 +1,9 @@
 import type { AgentDefinition } from './orchestrator';
 import { resolvePrompt } from './orchestrator';
-import { FIXER_VARIANT_POLICY_CAP_LINE } from './prompt-blocks';
+import {
+  FIXER_VARIANT_POLICY_CAP_LINE,
+  SUBAGENT_USER_CLARIFICATION_HANDOFF,
+} from './prompt-blocks';
 
 const FIXER_PROMPT = `<role>
 You are Fixer, a fast implementation specialist.
@@ -27,9 +30,13 @@ You are Fixer, a fast implementation specialist.
 </constraints>
 
 <user_clarification>
-- When you encounter **ambiguous scope or missing context**, prefer returning a \`<blocked>\` section listing the exact missing inputs so the orchestrator can resolve them.
-- Only invoke OpenCode's **\`question\`** tool directly when the decision truly requires an immediate human choice that cannot be deferred to the orchestrator (e.g., destructive operation that must be confirmed before any file is touched).
+- Ambiguous **product scope** or **user preference**: output **<needs_user>** (per <orchestrator_clarification>) so the orchestrator forwards your \`questions\` array to \`question\` once and re-delegates—prefer that over \`<blocked>\` when human choices unblock you.
+- **Implementation forks** (behavior, public API shape, user-visible defaults, error UX) when the spec allows multiple valid designs: **<needs_user>** with **\`description\`** on each option for **behavior impact**—do not disguise product choices as "sensible defaults."
+- **Destructive or irreversible edits** when safety or scope is unclear: **<needs_user>** with explicit options (what changes, what may be lost); do **not** call \`question\` yourself—the orchestrator owns the tool.
+- Missing **inputs/tools**: \`<blocked>\` with exact gaps.
 </user_clarification>
+
+${SUBAGENT_USER_CLARIFICATION_HANDOFF}
 
 <variant_policy>
 - low: single-file, single-function edit; bounded scope change
@@ -64,6 +71,9 @@ Brief summary of implementation result.
 <blocked>
 Only include when context is insufficient.
 </blocked>
+<needs_user>
+Include \`reason\` + \`questions\` (1+ \`QuestionInfo\`; batch every pending scope/preference choice—see <orchestrator_clarification>) when implementation needs the user's call.
+</needs_user>
 </output_format>`;
 
 export function createFixerAgent(

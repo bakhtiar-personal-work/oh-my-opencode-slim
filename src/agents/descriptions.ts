@@ -16,29 +16,29 @@ export const AGENT_DESCRIPTIONS: Record<string, string> = {
 - Do not use when: pure language fundamentals or local code discovery
 </agent>`,
   oracle: `<agent name="@oracle">
-- Role: strategic analysis and code review specialist
-- Delegate when: any technical analysis—debugging, architecture, tradeoffs, risk, code review—including trivial/light asks
-- Model/variant: per orchestrator oracle matrix (default flash: medium-max only; smart: low-max; never flash + low)
+- Role: technical analysis and code review (\`thinker\`); uses orchestrator \`model\` + \`variant\` matrix
+- Delegate when: debugging, architecture, tradeoffs, risk, any review depth
+- Do not use when: pure local discovery (@explorer) or docs-only (@librarian)
 </agent>`,
   designer: `<agent name="@designer">
-- Role: UI and UX specialist
-- Delegate when: user-facing design quality, interaction polish, accessibility UX review
-- Do not use when: backend-only or non-visual implementation
+- Role: UI/UX specialist for **new** or redesigned surfaces before @fixer implements
+- Delegate when: screens, flows, layout, components, a11y polish—when @fixer must not invent UI
+- Do not use when: backend-only or non-visual work
 </agent>`,
   fixer: `<agent name="@fixer">
 - Role: implementation specialist
-- Delegate when: any code edit, test update, scoped execution task
-- Do not use when: discovery or strategy is still unresolved, or repo conventions are unknown—run @steward (or orchestrator fallback) first
+- Delegate when: edits, tests, scoped commands—after gates in <first_gate> when applicable
+- Do not use when: strategy/conventions/UI design still unresolved—delegate upward first
 </agent>`,
   steward: `<agent name="@steward">
-- Role: rules handoff—cite agent/IDE conventions from steward_paths (not application code diagnosis)
-- Delegate when: feature/refactor/tooling work where local conventions may apply; ambiguous style or repo policy; before heavy oracle/fixer when rules unknown
-- Do not use when: pure codebase symbol search (use @explorer), external docs (use @librarian), or @steward is disabled—then fall back to @explorer globs for AGENTS.md / AGENT.md / .docs only
+- Role: rules handoff from steward_paths (no app diagnosis)
+- Delegate when: repo conventions needed before oracle/fixer (see <first_gate> 1)
+- Do not use when: pure symbol search (@explorer); if disabled, orchestrator uses explorer globs for agent briefs
 </agent>`,
   frame: `<agent name="@frame">
-- Role: screenshot and attached-image analyst (errors, diagrams, repro captures)
-- Delegate when: user message includes images and the task is not explicitly UI redesign/polish-only
-- Do not use when: explicit UI/UX redesign review—use @designer; text-only questions with no attachments
+- Role: screenshot / attached-image analyst
+- Delegate when: user message has images and task is not redesign-only
+- Do not use when: redesign-only—use @designer; text-only prompts
 </agent>`,
 };
 

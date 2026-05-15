@@ -19,6 +19,7 @@ describe('createExplorerAgent', () => {
     expect(prompt).toContain('<tool_routing>');
     expect(prompt).toContain('<workflow>');
     expect(prompt).toContain('<constraints>');
+    expect(prompt).toContain('<user_choice_policy>');
     expect(prompt).toContain('<output_format>');
     expect(prompt).toContain('<variant_policy>');
   });
@@ -57,6 +58,7 @@ describe('createExplorerAgent', () => {
       '<workflow>',
       '<big_repo_strategy>',
       '<constraints>',
+      '<user_choice_policy>',
       '<variant_policy>',
       '<stale_codemap>',
       '<output_format>',

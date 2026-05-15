@@ -8,6 +8,7 @@ import {
   recordSessionDone,
 } from '../tui-state';
 import {
+  extractAssistantTextAfterPrompt,
   extractLatestUserImageParts,
   extractSessionResult,
   normalizeImagePartsForChildPrompt,
@@ -17,6 +18,14 @@ import {
   promptWithTimeout,
 } from '../utils/session';
 import type { SubagentDepthTracker } from '../utils/subagent-depth';
+
+/**
+ * When true, blocking `delegate_subagent` keeps the child session open and
+ * appends `<delegate_session_continue .../>` for `continue_session_id` flows.
+ */
+export function subagentOutputRequestsUserHandoff(text: string): boolean {
+  return text.includes('<needs_user>');
+}
 
 type OpencodeClient = import('@opencode-ai/plugin').PluginInput['client'];
 
@@ -60,50 +69,64 @@ export function createDelegateTools(
     promptText: string;
     timeout: number;
     promptParts?: PromptBodyPart[];
-  }): Promise<string> {
+    /** Resume an open child session after a needs_user handoff; skips create */
+    continueSessionId?: string;
+  }): Promise<{ text: string; openSessionId?: string }> {
     const modelRef = parseModelReference(options.model);
     if (!modelRef) {
       throw new Error(`Invalid model format: ${options.model}`);
     }
 
     let sessionId: string | undefined;
+    let keepChildSessionOpen = false;
+    const isContinuation = Boolean(options.continueSessionId?.trim());
 
     try {
-      const session = await ctx.client.session.create({
-        body: {
-          parentID: options.parentSessionId,
-          title: options.title,
-        },
-        query: { directory },
-      });
+      if (isContinuation) {
+        sessionId = options.continueSessionId?.trim();
+        if (!sessionId) {
+          throw new Error('continue_session_id was empty');
+        }
+      } else {
+        const session = await ctx.client.session.create({
+          body: {
+            parentID: options.parentSessionId,
+            title: options.title,
+          },
+          query: { directory },
+        });
 
-      if (!session.data?.id) {
-        throw new Error('Failed to create session');
-      }
+        if (!session.data?.id) {
+          throw new Error('Failed to create session');
+        }
 
-      sessionId = session.data.id;
+        sessionId = session.data.id;
 
-      // Record in session tree directly (bypasses event reliability)
-      recordSessionTree(
-        sessionId,
-        options.parentSessionId,
-        options.agent,
-        options.variant,
-        'blocking',
-      );
-
-      if (depthTracker) {
-        const registered = depthTracker.registerChild(
-          options.parentSessionId,
+        recordSessionTree(
           sessionId,
+          options.parentSessionId,
+          options.agent,
+          options.variant,
+          'blocking',
         );
-        if (!registered) {
-          throw new Error('Subagent depth exceeded');
+
+        if (depthTracker) {
+          const registered = depthTracker.registerChild(
+            options.parentSessionId,
+            sessionId,
+          );
+          if (!registered) {
+            throw new Error('Subagent depth exceeded');
+          }
+        }
+
+        if (multiplexerEnabled) {
+          await new Promise((r) => setTimeout(r, TMUX_SPAWN_DELAY_MS));
         }
       }
 
-      if (multiplexerEnabled) {
-        await new Promise((r) => setTimeout(r, TMUX_SPAWN_DELAY_MS));
+      if (!sessionId) {
+        throw new Error('Failed to obtain subagent session id');
       }
 
       const parts: PromptBodyPart[] = options.promptParts?.length
@@ -131,20 +154,26 @@ export function createDelegateTools(
         options.timeout,
       );
 
-      const extraction = await extractSessionResult(ctx.client, sessionId, {
-        includeReasoning: false,
-      });
-
-      // Mark done before cleanup so flash dot shows in TUI
-      recordSessionDone(sessionId);
+      const extraction = await extractAssistantTextAfterPrompt(
+        ctx.client,
+        sessionId,
+        directory,
+      );
 
       if (extraction.empty) {
         throw new Error('Empty response from provider');
       }
 
-      return extraction.text;
+      const text = extraction.text;
+      if (subagentOutputRequestsUserHandoff(text)) {
+        keepChildSessionOpen = true;
+        return { text, openSessionId: sessionId };
+      }
+
+      recordSessionDone(sessionId);
+      return { text };
     } finally {
-      if (sessionId) {
+      if (sessionId && !keepChildSessionOpen) {
         try {
           await Promise.race([
             ctx.client.session.abort({ path: { id: sessionId } }),
@@ -164,7 +193,9 @@ export function createDelegateTools(
     description:
       'Delegate a task to a specialist subagent with explicit variant control. ' +
       'Always specify variant based on task complexity. ' +
-      'Blocking mode waits for the result; fire_forget returns a session_id to collect later.',
+      'Blocking mode waits for the result; fire_forget returns a session_id to collect later. ' +
+      'If the result includes <delegate_session_continue/>, the child session stayed open for ' +
+      'continue_session_id (same transcript after user clarification).',
     args: {
       agent: tool.schema
         .enum(subagentOptions)
@@ -189,12 +220,23 @@ export function createDelegateTools(
         .describe(
           'Override the subagent model. Pass for @oracle when you selected a specific model (flash vs pro).',
         ),
+      continue_session_id: tool.schema
+        .string()
+        .optional()
+        .describe(
+          'Blocking only: resume the same child session after <needs_user>. Use session_id from <delegate_session_continue> in the prior delegate_subagent result (same agent, model, variant).',
+        ),
     },
     execute: async (args, context) => {
       const parentSessionId = context.sessionID;
       const agentName = args.agent;
       const variant = args.variant;
       const mode = args.mode ?? 'blocking';
+      const continueSessionId = args.continue_session_id?.trim() || undefined;
+
+      if (continueSessionId && mode === 'fire_forget') {
+        return 'Error: continue_session_id is only valid for blocking delegate_subagent (omit mode or mode: blocking).';
+      }
 
       const agentOverride = getAgentOverride(config, agentName);
       const effectiveVariant = agentOverride?.variant ?? variant;
@@ -210,7 +252,7 @@ export function createDelegateTools(
       }
 
       let frameImageParts: PromptBodyPart[] = [];
-      if (agentName === 'frame') {
+      if (agentName === 'frame' && !continueSessionId) {
         const rawFrameParts = await extractLatestUserImageParts(
           ctx.client,
           parentSessionId,
@@ -305,7 +347,7 @@ export function createDelegateTools(
 
       // Blocking mode
       try {
-        const result = await runAgentSession({
+        const runResult = await runAgentSession({
           parentSessionId,
           title: `${agentName} (${effectiveVariant ?? 'default'})`,
           agent: agentName,
@@ -314,10 +356,14 @@ export function createDelegateTools(
           promptText: args.prompt,
           timeout: 0, // no timeout — let subagents run freely
           promptParts: frameImageParts.length > 0 ? frameImageParts : undefined,
+          continueSessionId,
         });
 
         let output = `**${agentName}** (variant: ${effectiveVariant ?? 'default'}):\n\n`;
-        output += result;
+        output += runResult.text;
+        if (runResult.openSessionId) {
+          output += `\n\n<delegate_session_continue session_id="${runResult.openSessionId}" agent="${agentName}" />`;
+        }
         return output;
       } catch (err) {
         return `Error running ${agentName} (variant: ${effectiveVariant ?? 'default'}): ${
@@ -343,7 +389,7 @@ export function createDelegateTools(
           ctx.client.session.status as (
             args: Record<string, unknown>,
           ) => Promise<{ data?: Record<string, unknown> }>
-        )({ path: { id: sid } });
+        )({ path: { id: sid }, query: { directory } });
 
         const status = (statusResult.data as Record<string, unknown>)?.type as
           | string
@@ -355,7 +401,7 @@ export function createDelegateTools(
           const extraction = await extractSessionResult(
             ctx.client,
             args.session_id,
-            { includeReasoning: false },
+            { includeReasoning: false, directory },
           );
 
           ctx.client.session

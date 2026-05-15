@@ -1,6 +1,9 @@
 import type { AgentDefinition } from './orchestrator';
 import { resolvePrompt } from './orchestrator';
-import { EXPLORER_VARIANT_SCOPE_LINES } from './prompt-blocks';
+import {
+  EXPLORER_VARIANT_SCOPE_LINES,
+  SUBAGENT_USER_CLARIFICATION_HANDOFF,
+} from './prompt-blocks';
 
 const EXPLORER_PROMPT = `<role>
 You are Explorer, a fast codebase navigation specialist.
@@ -38,6 +41,11 @@ You are Explorer, a fast codebase navigation specialist.
 - NEVER return raw match dumps over ~30 lines; summarize and group by file.
 </constraints>
 
+<user_choice_policy>
+- **Many equally plausible regions** (same symbol names, feature flags, parallel modules) and narrowing needs **product intent** (which feature, release, or user flow): **<needs_user>**—options name what each region is for so the user can pick.
+- Do not guess which area "matters most" when the task does not say; summarize candidates briefly, then hand off.
+</user_choice_policy>
+
 <variant_policy>
 ${EXPLORER_VARIANT_SCOPE_LINES.map((l) => `- ${l}`).join('\n')}
 </variant_policy>
@@ -46,6 +54,8 @@ ${EXPLORER_VARIANT_SCOPE_LINES.map((l) => `- ${l}`).join('\n')}
 - Use codemap as a fast orientation aid only.
 - If codemap and live search disagree, trust live search results and call out the discrepancy.
 </stale_codemap>
+
+${SUBAGENT_USER_CLARIFICATION_HANDOFF}
 
 <output_format>
 <results>
@@ -63,6 +73,9 @@ Direct answer to the search request.
 <blocked>
 Only when required tools (e.g. ast_grep_search) are unavailable and no fallback could produce a reliable result. List the tool needed and the pattern attempted.
 </blocked>
+<needs_user>
+Include \`reason\` + \`questions\` (1+ \`QuestionInfo\`; see <orchestrator_clarification>) when multiple plausible code regions match and only the user can narrow scope (not missing tools).
+</needs_user>
 </output_format>`;
 
 export function createExplorerAgent(

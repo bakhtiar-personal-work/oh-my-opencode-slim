@@ -3,6 +3,7 @@ import { resolvePrompt } from './orchestrator';
 import {
   formatOracleAgentVariantPolicyXml,
   ORACLE_MODEL_TIER_BLOCK,
+  SUBAGENT_USER_CLARIFICATION_HANDOFF,
 } from './prompt-blocks';
 
 const ORACLE_PROMPT = `<role>
@@ -38,7 +39,15 @@ ${ORACLE_MODEL_TIER_BLOCK}
 - NEVER ignore provided file paths and symbols.
 </constraints>
 
+<user_choice_policy>
+- **Prioritization forks** (ship speed vs depth vs cost vs risk appetite) when tradeoffs are **balanced** and a single recommendation would be arbitrary: **<needs_user>**—each option **\`description\`** says what the user optimizes for and what they give up.
+- **Scope / product semantics** (who the feature is for, failure tolerance, SLO) when analysis hinges on it: **<needs_user>** before locking a recommendation.
+- **One clear technical winner** from repo evidence or docs: state it without asking; **preference among equals** or **value judgment**: **<needs_user>**, not a silent "best practice" pick.
+</user_choice_policy>
+
 ${formatOracleAgentVariantPolicyXml()}
+
+${SUBAGENT_USER_CLARIFICATION_HANDOFF}
 
 <output_format>
 If the caller explicitly requests concise output (e.g., prompt includes “briefly”, “concise”, “short”, or “tl;dr”), keep section headers but compress each section to 1-2 bullets.
@@ -65,6 +74,9 @@ Primary recommendation with why.
 <blocked>
 Only include when analysis cannot be completed — missing context, needs librarian research first, or insufficient information to form a recommendation.
 </blocked>
+<needs_user>
+Include \`reason\` + \`questions\` (1+ \`QuestionInfo\`; batch every scope/priority/risk choice in one handoff—see <orchestrator_clarification>) before analysis can proceed.
+</needs_user>
 - For low variant, keep <tradeoffs>, <risks>, and <confidence> concise.
 - For medium variant, keep all sections but limit alternatives to one; omit placeholder bullets—skip a subsection entirely if it would add no real content.
 - For high/max variants, all sections must be detailed and risk-oriented, with clear severity labels for risks.

@@ -3,6 +3,7 @@ import { resolvePrompt } from './orchestrator';
 import {
   formatStewardAgentStewardPathsBody,
   STEWARD_VARIANT_SCOPE_LINES,
+  SUBAGENT_USER_CLARIFICATION_HANDOFF,
 } from './prompt-blocks';
 
 export { STEWARD_PATH_GLOBS } from './prompt-blocks';
@@ -43,7 +44,10 @@ ${STEWARD_VARIANT_SCOPE_LINES.map((l) => `- ${l}`).join('\n')}
 - NEVER delegate to subagents.
 - NEVER modify files.
 - NEVER treat plain \`docs/**\` as authoritative unless explicitly scoped by the orchestrator prompt.
+- **Conflicting cited rules** or a **policy gap** (precedence unclear, two docs disagree and steward_paths do not resolve it): **<needs_user>** with options that spell out which rule set or interpretation you would follow—do **not** silently merge or invent precedence.
 </constraints>
+
+${SUBAGENT_USER_CLARIFICATION_HANDOFF}
 
 <output_format>
 <summary>
@@ -58,6 +62,9 @@ Optional — paths/globs tried with no relevant hits.
 <blocked>
 Only when tooling prevented reads or paths are inaccessible.
 </blocked>
+<needs_user>
+Include \`reason\` + \`questions\` (1+ \`QuestionInfo\`; see <orchestrator_clarification>) when repo rules cannot be applied without a user policy choice (not missing files).
+</needs_user>
 </output_format>`;
 
 export function createStewardAgent(

@@ -88,9 +88,7 @@ export const FALLBACK_FAILOVER_TIMEOUT_MS = 15_000;
 export const DEFAULT_MAX_SUBAGENT_DEPTH = 3;
 
 // Workflow reminders
-export const PHASE_REMINDER_TEXT = `!IMPORTANT! Recall the workflow rules:
-Understand → choose the best parallelized path based on your capabilities and agents delegation rules → recall session reuse rules → execute → verify.
-If delegating, launch the specialist in the same turn you mention it !END!`;
+export const PHASE_REMINDER_TEXT = `!IMPORTANT! Follow **<first_gate>** order in system prompt; **delegate_subagent** in the same turn you name the agent. !END!`;
 
 // Tmux pane spawn delay (ms) — gives TmuxSessionManager time to create pane
 export const TMUX_SPAWN_DELAY_MS = 500;

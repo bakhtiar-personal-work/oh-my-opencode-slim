@@ -53,11 +53,45 @@ describe('buildOrchestratorPrompt', () => {
   test('includes routing priority, question tool, oracle matrix, steward/frame', () => {
     const prompt = buildOrchestratorPrompt();
     expect(prompt).toContain('<routing_priority>');
+    expect(prompt).toContain('<first_gate>');
+    expect(prompt).toContain('delegate_subagent(agent: "steward"');
+    expect(prompt).toContain('delegate_subagent(agent: "designer"');
     expect(prompt).toContain('<user_clarification>');
-    expect(prompt).toContain('`question` tool');
+    expect(prompt).toContain('<needs_user>');
+    expect(prompt).toContain('**`question`**');
+    expect(prompt).toContain('QuestionInfo');
+    expect(prompt).toContain('continue_session_id');
+    expect(prompt).toContain('Subagent handoff is blocking');
+    expect(prompt).toContain('Native question UI');
+    expect(prompt).toContain('Parallel specialists');
     expect(prompt).toContain('NEVER use **default (flash) + low**');
     expect(prompt).toContain('<steward_protocol>');
     expect(prompt).toContain('<frame_protocol>');
+  });
+
+  test('first_gate uses oracle for new UI path when designer disabled', () => {
+    const prompt = buildOrchestratorPrompt(new Set(['designer']));
+    expect(prompt).toContain('@designer disabled');
+    expect(prompt).not.toContain('delegate_subagent(agent: "designer"');
+  });
+
+  test('first_gate analysis gate references oracle thinker when oracle enabled', () => {
+    const prompt = buildOrchestratorPrompt();
+    expect(prompt).toContain('Analysis gate (@oracle / thinker)');
+    expect(prompt).toContain('delegate_subagent(agent: "oracle"');
+  });
+
+  test('first_gate analysis gate when oracle disabled', () => {
+    const prompt = buildOrchestratorPrompt(new Set(['oracle']));
+    expect(prompt).toContain('@oracle is **disabled**');
+    expect(prompt).not.toContain('Analysis gate (@oracle / thinker)');
+  });
+
+  test('first_gate uses explorer when steward disabled', () => {
+    const prompt = buildOrchestratorPrompt(new Set(['steward']));
+    expect(prompt).toContain('<first_gate>');
+    expect(prompt).toContain('delegate_subagent(agent: "explorer"');
+    expect(prompt).not.toContain('delegate_subagent(agent: "steward"');
   });
 
   test('omits steward_protocol when steward disabled', () => {

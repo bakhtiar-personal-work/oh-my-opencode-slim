@@ -19,6 +19,7 @@ describe('createLibrarianAgent', () => {
     expect(prompt).toContain('<tool_and_mcp_routing>');
     expect(prompt).toContain('<workflow>');
     expect(prompt).toContain('<conflict_resolution>');
+    expect(prompt).toContain('Competing libraries');
     expect(prompt).toContain('<variant_policy>');
     expect(prompt).toContain('<constraints>');
     expect(prompt).toContain('<output_format>');

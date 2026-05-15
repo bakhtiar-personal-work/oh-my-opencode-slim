@@ -8,7 +8,21 @@ import {
   LIBRARIAN_VARIANT_SCOPE_LINES,
   STEWARD_PATH_GLOBS,
   STEWARD_VARIANT_SCOPE_LINES,
+  SUBAGENT_USER_CLARIFICATION_HANDOFF,
 } from './prompt-blocks';
+
+describe('SUBAGENT_USER_CLARIFICATION_HANDOFF', () => {
+  test('defines needs_user handoff for orchestrator question tool', () => {
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('<needs_user>');
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('orchestrator');
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('questions');
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('QuestionInfo');
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('header');
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('label');
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('picker');
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('No silent defaults');
+  });
+});
 
 describe('prompt-blocks', () => {
   test('steward protocol lists every configured glob', () => {
@@ -16,7 +30,8 @@ describe('prompt-blocks', () => {
     for (const g of STEWARD_PATH_GLOBS) {
       expect(block).toContain(`\`${g}\``);
     }
-    expect(block).toContain('**Rules handoff only:**');
+    expect(block).toContain('**Handoff only:**');
+    expect(block).toContain('**Steward prompt:**');
     expect(block).toContain('**Attribution:**');
   });
 

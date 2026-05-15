@@ -19,6 +19,7 @@ describe('createOracleAgent', () => {
     expect(prompt).toContain('<capabilities>');
     expect(prompt).toContain('<tool_routing>');
     expect(prompt).toContain('<constraints>');
+    expect(prompt).toContain('<user_choice_policy>');
     expect(prompt).toContain('<variant_policy>');
     expect(prompt).toContain('<output_format>');
   });
@@ -61,6 +62,7 @@ describe('createOracleAgent', () => {
       '<capabilities>',
       '<tool_routing>',
       '<constraints>',
+      '<user_choice_policy>',
       '<variant_policy>',
       '<output_format>',
       '<diagnosis>',

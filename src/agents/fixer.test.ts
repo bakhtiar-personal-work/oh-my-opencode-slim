@@ -17,8 +17,11 @@ describe('createFixerAgent', () => {
     const prompt = agent.config.prompt ?? '';
     expect(prompt).toContain('<role>');
     expect(prompt).toContain('<workflow>');
+    expect(prompt).toContain('<file_read_budget>');
     expect(prompt).toContain('<constraints>');
-    expect(prompt).toContain('<insufficient_context>');
+    expect(prompt).toContain('<user_clarification>');
+    expect(prompt).toContain('Implementation forks');
+    expect(prompt).toContain('<orchestrator_clarification>');
     expect(prompt).toContain('<build_recovery>');
     expect(prompt).toContain('<verification_hints>');
     expect(prompt).toContain('<output_format>');
@@ -53,9 +56,11 @@ describe('createFixerAgent', () => {
     const requiredSections = [
       '<role>',
       '<workflow>',
+      '<file_read_budget>',
       '<constraints>',
+      '<user_clarification>',
+      '<orchestrator_clarification>',
       '<variant_policy>',
-      '<insufficient_context>',
       '<build_recovery>',
       '<verification_hints>',
       '<output_format>',

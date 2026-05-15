@@ -1,6 +1,9 @@
 import type { AgentDefinition } from './orchestrator';
 import { resolvePrompt } from './orchestrator';
-import { FRAME_VARIANT_SCOPE_LINES } from './prompt-blocks';
+import {
+  FRAME_VARIANT_SCOPE_LINES,
+  SUBAGENT_USER_CLARIFICATION_HANDOFF,
+} from './prompt-blocks';
 
 const FRAME_PROMPT = `<role>
 You are Frame, a vision analyst for screenshots and attached images (errors, diagrams, UI captures). You are not the UI design specialist—that is @designer.
@@ -41,6 +44,8 @@ Frame is a vision-only specialist — no tool calls are required in most session
 - If an image is partially corrupted, blurred, or unreadable, describe what IS visible, label the unreadable regions explicitly, and lower your \`<confidence>\` accordingly — do not skip reporting or block on perfect input.
 </constraints>
 
+${SUBAGENT_USER_CLARIFICATION_HANDOFF}
+
 <variant_policy>
 ${FRAME_VARIANT_SCOPE_LINES.map((l) => `- ${l}`).join('\n')}
 - max: not supported — frame provides context that the orchestrator then routes to @oracle for in-depth analysis. The expected flow is @frame first (describe), then @oracle (analyze).
@@ -65,6 +70,9 @@ Suggested next agent(s) with one-line rationale each.
 <blocked>
 Only include when the image cannot be described (vision-incapable model, missing attachment, or complete corruption). State the exact error or limitation.
 </blocked>
+<needs_user>
+Include \`reason\` + \`questions\` (1+ \`QuestionInfo\`; see <orchestrator_clarification>) when the visual goal is ambiguous and only the user can choose what to optimize for (e.g. **diagnostic depth vs speed**, **layout/readability vs verbatim text**, **which UI element is in scope** when the screenshot could support several tasks). Each option **\`description\`** must say what analysts or **@designer** / **@fixer** would do next for that choice—never pick one interpretation without asking.
+</needs_user>
 </output_format>`;
 
 export function createFrameAgent(

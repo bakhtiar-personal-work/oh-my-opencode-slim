@@ -5,8 +5,25 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { PluginInput } from '@opencode-ai/plugin';
+import { delay } from './polling';
 
 type OpencodeClient = PluginInput['client'];
+
+/** Poll interval while checking session status after `prompt`. */
+const POST_PROMPT_IDLE_POLL_MS = 200;
+
+/**
+ * Max time to poll session status after a delegate prompt. Keeps behavior bounded
+ * when the host never reports `idle` for child sessions or uses a different API shape.
+ */
+const DELEGATE_POST_PROMPT_STATUS_MAX_MS = 45_000;
+
+const SESSION_TERMINAL_STATUSES = new Set(['idle', 'completed', 'error']);
+const SESSION_ACTIVE_STATUSES = new Set(['busy', 'retry']);
+
+/** Retries if messages are not yet visible after idle. */
+const POST_IDLE_EXTRACT_RETRY_DELAY_MS = 350;
+const POST_IDLE_EXTRACT_MAX_RETRIES = 4;
 
 type SessionPromptBody = NonNullable<
   Parameters<OpencodeClient['session']['prompt']>[0]['body']
@@ -237,18 +254,21 @@ export interface SessionExtractionResult {
  * @param client - OpenCode client instance
  * @param sessionId - Session ID to extract from
  * @param options - Optional: `includeReasoning` (default true) controls whether
- *                  reasoning/chain-of-thought parts are included.
+ *                  reasoning/chain-of-thought parts are included;
+ *                  `directory` scopes workspace for `session.messages` (child sessions).
  * @returns Object with extracted text and an `empty` flag for zero-content detection
  */
 export async function extractSessionResult(
   client: OpencodeClient,
   sessionId: string,
-  options?: { includeReasoning?: boolean },
+  options?: { includeReasoning?: boolean; directory?: string },
 ): Promise<SessionExtractionResult> {
   const includeReasoning = options?.includeReasoning ?? true;
+  const directory = options?.directory;
 
   const messagesResult = await client.session.messages({
     path: { id: sessionId },
+    ...(directory ? { query: { directory } } : {}),
   });
   const messages = (messagesResult.data ?? []) as Array<{
     info?: { role: string };
@@ -272,4 +292,98 @@ export async function extractSessionResult(
 
   const text = extractedContent.filter((t) => t.length > 0).join('\n\n');
   return { text, empty: text.length === 0 };
+}
+
+async function readSessionStatusType(
+  client: OpencodeClient,
+  sessionId: string,
+  workspaceDirectory: string,
+): Promise<string | undefined> {
+  try {
+    const statusResult = await (
+      client.session.status as (
+        args: Record<string, unknown>,
+      ) => Promise<{ data?: unknown }>
+    )({
+      path: { id: sessionId },
+      query: { directory: workspaceDirectory },
+    });
+    const data = statusResult.data;
+    if (data && typeof data === 'object' && 'type' in data) {
+      const t = (data as { type: unknown }).type;
+      return typeof t === 'string' ? t : undefined;
+    }
+  } catch {
+    /* host may not support per-session status */
+  }
+  return undefined;
+}
+
+/**
+ * After `session.prompt`, optionally wait for a terminal session status.
+ * Returns immediately when per-session status is unavailable (common for some hosts),
+ * so we never block the orchestrator on a mismatched status API.
+ */
+export async function waitUntilSessionIdle(
+  client: OpencodeClient,
+  sessionId: string,
+  workspaceDirectory: string,
+): Promise<void> {
+  const deadline = Date.now() + DELEGATE_POST_PROMPT_STATUS_MAX_MS;
+  while (Date.now() < deadline) {
+    const type = await readSessionStatusType(
+      client,
+      sessionId,
+      workspaceDirectory,
+    );
+    if (type === undefined) {
+      return;
+    }
+    if (SESSION_TERMINAL_STATUSES.has(type)) {
+      return;
+    }
+    if (SESSION_ACTIVE_STATUSES.has(type)) {
+      await delay(POST_PROMPT_IDLE_POLL_MS);
+      continue;
+    }
+    return;
+  }
+}
+
+/**
+ * After `session.prompt`, wait for idle then read assistant text. Retries if the
+ * message store lags; falls back to including reasoning parts if text is still empty.
+ */
+export async function extractAssistantTextAfterPrompt(
+  client: OpencodeClient,
+  sessionId: string,
+  workspaceDirectory: string,
+): Promise<SessionExtractionResult> {
+  await waitUntilSessionIdle(client, sessionId, workspaceDirectory);
+
+  let result = await extractSessionResult(client, sessionId, {
+    includeReasoning: false,
+    directory: workspaceDirectory,
+  });
+
+  for (
+    let attempt = 0;
+    attempt < POST_IDLE_EXTRACT_MAX_RETRIES && result.empty;
+    attempt++
+  ) {
+    await delay(POST_IDLE_EXTRACT_RETRY_DELAY_MS);
+    result = await extractSessionResult(client, sessionId, {
+      includeReasoning: false,
+      directory: workspaceDirectory,
+    });
+  }
+
+  if (result.empty) {
+    result = await extractSessionResult(client, sessionId, {
+      includeReasoning: true,
+      directory: workspaceDirectory,
+    });
+  }
+
+  return result;
 }
