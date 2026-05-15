@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-Provide a resilient preprocessor for `tool.execute.before` on `apply_patch` that rewrites recoverable stale hunks, validates workspace boundaries, and blocks unsafe patches before they reach OpenCode’s native patch executor.
+Provide a resilient preprocessor for `tool.execute.before` on `apply_patch` that rewrites recoverable stale hunks, validates workspace boundaries, and blocks unsafe patches before they reach OpenCode's native patch executor.
 
 ## Design
 

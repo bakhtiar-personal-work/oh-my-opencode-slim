@@ -58,13 +58,19 @@ describe('buildOrchestratorPrompt', () => {
     expect(prompt).toContain('delegate_subagent(agent: "designer"');
     expect(prompt).toContain('<user_clarification>');
     expect(prompt).toContain('<needs_user>');
-    expect(prompt).toContain('**`question`**');
+    expect(prompt).toContain('`question`');
     expect(prompt).toContain('QuestionInfo');
     expect(prompt).toContain('continue_session_id');
     expect(prompt).toContain('Subagent handoff is blocking');
     expect(prompt).toContain('Native question UI');
+    expect(prompt).toContain('Real `question` tool execution');
+    expect(prompt).toContain('Question payload plain text');
     expect(prompt).toContain('Parallel specialists');
-    expect(prompt).toContain('NEVER use **default (flash) + low**');
+    expect(prompt).toContain('verbatim');
+    expect(prompt).toContain('Open follow-ups');
+    expect(prompt).toContain('Subagent → user relay');
+    expect(prompt).toContain('No orchestrator substitution');
+    expect(prompt).toContain('NEVER use default (flash) + low');
     expect(prompt).toContain('<steward_protocol>');
     expect(prompt).toContain('<frame_protocol>');
   });
@@ -83,7 +89,7 @@ describe('buildOrchestratorPrompt', () => {
 
   test('first_gate analysis gate when oracle disabled', () => {
     const prompt = buildOrchestratorPrompt(new Set(['oracle']));
-    expect(prompt).toContain('@oracle is **disabled**');
+    expect(prompt).toContain('@oracle is disabled');
     expect(prompt).not.toContain('Analysis gate (@oracle / thinker)');
   });
 

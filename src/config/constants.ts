@@ -88,7 +88,7 @@ export const FALLBACK_FAILOVER_TIMEOUT_MS = 15_000;
 export const DEFAULT_MAX_SUBAGENT_DEPTH = 3;
 
 // Workflow reminders
-export const PHASE_REMINDER_TEXT = `!IMPORTANT! Follow **<first_gate>** order in system prompt; **delegate_subagent** in the same turn you name the agent. !END!`;
+export const PHASE_REMINDER_TEXT = `!IMPORTANT! Follow <first_gate> order in system prompt; delegate_subagent in the same turn you name the agent. !END!`;
 
 // Tmux pane spawn delay (ms) — gives TmuxSessionManager time to create pane
 export const TMUX_SPAWN_DELAY_MS = 500;

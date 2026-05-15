@@ -191,25 +191,25 @@ describe('apply-patch/matching', () => {
   test('seek matches mixed curly and straight quotes', () => {
     expect(
       seek(
-        ['const title = “it’s ready”;'],
+        ['const title = “it's ready”; '],
         ['const title = "it\'s ready";'],
-        0,
+          0,
       ),
     ).toBe(0);
   });
 
-  test('seekMatch reports when the match was only tolerant and safe', () => {
-    expect(
-      seekMatch(['console.log(“hola”);  '], ['console.log("hola");'], 0),
-    ).toEqual({
-      index: 0,
-      comparator: 'unicode-trim-end',
-      exact: false,
-    });
+test('seekMatch reports when the match was only tolerant and safe', () => {
+  expect(
+    seekMatch(['console.log(“hola”);  '], ['console.log("hola");'], 0),
+  ).toEqual({
+    index: 0,
+    comparator: 'unicode-trim-end',
+    exact: false,
   });
+});
 
-  test('comparator separation distinguishes safe rescue from permissive comparators', () => {
-    expect(autoRescueComparators).toHaveLength(4);
-    expect(permissiveComparators).toHaveLength(6);
-  });
+test('comparator separation distinguishes safe rescue from permissive comparators', () => {
+  expect(autoRescueComparators).toHaveLength(4);
+  expect(permissiveComparators).toHaveLength(6);
+});
 });

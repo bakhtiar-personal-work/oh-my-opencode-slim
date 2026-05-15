@@ -21,7 +21,7 @@ export const AGENT_DESCRIPTIONS: Record<string, string> = {
 - Do not use when: pure local discovery (@explorer) or docs-only (@librarian)
 </agent>`,
   designer: `<agent name="@designer">
-- Role: UI/UX specialist for **new** or redesigned surfaces before @fixer implements
+- Role: UI/UX specialist for new or redesigned surfaces before @fixer implements
 - Delegate when: screens, flows, layout, components, a11y polish—when @fixer must not invent UI
 - Do not use when: backend-only or non-visual work
 </agent>`,

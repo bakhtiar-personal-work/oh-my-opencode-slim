@@ -77,7 +77,7 @@ Cross-cutting runtime utilities used by orchestration, hooks, and plugin I/O.
 - **Consumers**
   - `src/multiplexer/*`: `SubagentDepthTracker` and `tmux.ts` integration.
   - `src/hooks/*`: marker detection, polling, and session-aware state helpers.
-  - `src/hooks/task-session-manager`: `SessionManager`, `parseTaskIdFromTaskOutput`, and `deriveTaskSessionLabel` provide resumable-session workflow; the plugin’s system-transform passes the hook output through `collapseSystemInPlace` after this manager injects prompts.
+  - `src/hooks/task-session-manager`: `SessionManager`, `parseTaskIdFromTaskOutput`, and `deriveTaskSessionLabel` provide resumable-session workflow; the plugin's system-transform passes the hook output through `collapseSystemInPlace` after this manager injects prompts.
 
 - **Dependencies**
   - Pulls constants from `../config` (`DEFAULT_MAX_SUBAGENT_DEPTH`, polling intervals/timeouts).

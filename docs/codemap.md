@@ -55,5 +55,5 @@ The existing screenshot lives in `img/cartography.png`.
 
 ## Related
 
-- `src/skills/codemap/README.md` and `src/skills/codemap/SKILL.md` contain the skill’s internal docs.
+- `src/skills/codemap/README.md` and `src/skills/codemap/SKILL.md` contain the skill's internal docs.
 - `codemap.md` at the repo root is an example output/starting point.

@@ -21,6 +21,18 @@ describe('SUBAGENT_USER_CLARIFICATION_HANDOFF', () => {
     expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('label');
     expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('picker');
     expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain('No silent defaults');
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain(
+      'Follow-up clarifications',
+    );
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain(
+      'Option A / Option B',
+    );
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain(
+      'Teaching vs picker text',
+    );
+    expect(SUBAGENT_USER_CLARIFICATION_HANDOFF).toContain(
+      'Question UI strings',
+    );
   });
 });
 
@@ -30,9 +42,9 @@ describe('prompt-blocks', () => {
     for (const g of STEWARD_PATH_GLOBS) {
       expect(block).toContain(`\`${g}\``);
     }
-    expect(block).toContain('**Handoff only:**');
-    expect(block).toContain('**Steward prompt:**');
-    expect(block).toContain('**Attribution:**');
+    expect(block).toContain('Handoff only:');
+    expect(block).toContain('Steward prompt:');
+    expect(block).toContain('Attribution:');
   });
 
   test('frame protocol mentions delegate_subagent for frame', () => {
