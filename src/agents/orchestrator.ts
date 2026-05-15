@@ -95,7 +95,8 @@ export function buildOrchestratorPrompt(
   // Use placeholder strings when models are not yet configured, so prompt
   // examples render with readable text instead of empty model: "" strings.
   const oracleDefault = oracleDefaultResolved || '<oracle-default>';
-  const oracleSmart = oracleSmartResolved || oracleDefaultResolved || '<oracle-smart>';
+  const oracleSmart =
+    oracleSmartResolved || oracleDefaultResolved || '<oracle-smart>';
   const modelPoolLines = singleTierMode
     ? `- single tier: ${oracleDefault} (no separate smart model configured; treat as one-tier — raise variant by one step where smart would otherwise apply)`
     : `- default: ${oracleDefault}\n- smart: ${oracleSmart}`;
@@ -127,7 +128,8 @@ When the latest user turn includes "### Context budget (plugin telemetry)" (live
 <constraints>
 - NEVER edit files directly. Every code change goes to @fixer.
 - NEVER do codebase discovery yourself. Use @explorer.
-- NEVER harvest in-repo agent rules or IDE policy prose yourself. Use **blocking @steward** per <steward_protocol> whenever work can affect code, tests, or repo workflow (if @steward is disabled, use @explorer only to glob \`AGENTS.md\` / \`AGENT.md\` / `**/.docs` / `**/.cursor/rules` as a fallback).
+- NEVER harvest in-repo agent rules or IDE policy prose yourself. Use **blocking @steward** per <steward_protocol> whenever work can affect code, tests, or repo workflow (if @steward is disabled, use @explorer only to glob \`AGENTS.md\` / \`AGENT.md\` / \`**/.docs\` / \`**/.cursor/rules\` as a fallback).
+- NEVER treat **@steward** output as technical root cause. Merge cited rules into downstream prompts; use **@explorer** (+ file reads) and **@oracle** for diagnosis and analysis.
 - NEVER substitute your own reasoning for **technical analysis** (debugging, architecture, tradeoffs, risk, code review—including light/trivial). Always delegate to @oracle; control cost via variant depth in <oracle_protocol>. **Exception:** purely mechanical edits skip oracle—see <execution>.
 - NEVER interpret user-attached images/screenshots yourself when another path exists: delegate to @frame first unless the user explicitly asked for UI redesign/polish only (@designer).
 - ALWAYS pass explicit \`model\` when delegating to @oracle.

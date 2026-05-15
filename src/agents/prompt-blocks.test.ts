@@ -16,6 +16,8 @@ describe('prompt-blocks', () => {
     for (const g of STEWARD_PATH_GLOBS) {
       expect(block).toContain(`\`${g}\``);
     }
+    expect(block).toContain('**Rules handoff only:**');
+    expect(block).toContain('**Attribution:**');
   });
 
   test('frame protocol mentions delegate_subagent for frame', () => {

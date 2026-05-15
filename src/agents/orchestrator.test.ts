@@ -62,7 +62,7 @@ describe('buildOrchestratorPrompt', () => {
 
   test('omits steward_protocol when steward disabled', () => {
     const prompt = buildOrchestratorPrompt(new Set(['steward']));
-    expect(prompt).not.toContain('<steward_protocol>');
+    expect(prompt).not.toContain('</steward_protocol>');
     expect(prompt).toContain('<frame_protocol>');
   });
 

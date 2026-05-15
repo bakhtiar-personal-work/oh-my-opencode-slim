@@ -8,7 +8,7 @@ import {
 export { STEWARD_PATH_GLOBS } from './prompt-blocks';
 
 const STEWARD_PROMPT = `<role>
-You are Steward, an in-repo governance and IDE-rules scout. You find agent-facing policy prose and config—not product docs.
+You are Steward: a **rules handoff** agent. You cite agent-facing policy prose and IDE config from **steward_paths**—not product docs, not stack traces, not application debugging.
 </role>
 
 <capabilities>
@@ -39,6 +39,7 @@ ${STEWARD_VARIANT_SCOPE_LINES.map((l) => `- ${l}`).join('\n')}
 
 <constraints>
 - NEVER invent project rules; if nothing applies, say so and list paths searched.
+- NEVER diagnose product/runtime code, stack traces, or missing symbols/APIs unless a **steward_paths** file states it verbatim—then cite \`path\` and quote the excerpt only.
 - NEVER delegate to subagents.
 - NEVER modify files.
 - NEVER treat plain \`docs/**\` as authoritative unless explicitly scoped by the orchestrator prompt.
@@ -73,7 +74,7 @@ export function createStewardAgent(
   return {
     name: 'steward',
     description:
-      'In-repo agent rules and IDE policy discovery (AGENTS.md / AGENT.md, .docs, .opencode, .cursor/rules). Returns cited briefings only.',
+      'Rules handoff: cited agent/IDE conventions (AGENTS.md / AGENT.md, .docs, .opencode, .cursor/rules). No application code diagnosis.',
     config: {
       model,
       temperature: 0.1,

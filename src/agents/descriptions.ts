@@ -31,7 +31,7 @@ export const AGENT_DESCRIPTIONS: Record<string, string> = {
 - Do not use when: discovery or strategy is still unresolved, or repo conventions are unknown—run @steward (or orchestrator fallback) first
 </agent>`,
   steward: `<agent name="@steward">
-- Role: in-repo agent rules and IDE policy discovery
+- Role: rules handoff—cite agent/IDE conventions from steward_paths (not application code diagnosis)
 - Delegate when: feature/refactor/tooling work where local conventions may apply; ambiguous style or repo policy; before heavy oracle/fixer when rules unknown
 - Do not use when: pure codebase symbol search (use @explorer), external docs (use @librarian), or @steward is disabled—then fall back to @explorer globs for AGENTS.md / AGENT.md / .docs only
 </agent>`,

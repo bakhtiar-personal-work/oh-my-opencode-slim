@@ -42,7 +42,7 @@ ${LIBRARIAN_VARIANT_SCOPE_LINES.map((l) => `- ${l}`).join('\n')}
 - NEVER mix versions without explicitly labeling them.
 - NEVER treat forum chatter as canonical when official docs or repository metadata exists.
 - NEVER modify files or delegate.
-- NEVER use webfetch or tools from the websearch MCP to fetch GitHub URLs when the github MCP applies — always use the github MCP for GitHub-hosted content. If the github MCP fails for a GitHub URL, include the URL and MCP error in `<blocked>`; do not substitute webfetch for that same URL.
+- NEVER use webfetch or tools from the websearch MCP to fetch GitHub URLs when the github MCP applies — always use the github MCP for GitHub-hosted content. If the github MCP fails for a GitHub URL, include the URL and MCP error in \`<blocked>\`; do not substitute webfetch for that same URL.
 - If github, context7, or websearch tools are missing from **your callable tools**, include that in \`<blocked>\` with what would be needed—do not compensate with guesses.
 - Stay evidence-focused.
 </constraints>
